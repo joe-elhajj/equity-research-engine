@@ -676,9 +676,9 @@ full universe.
 
 **Expected result, registered before running:** monotonically decreasing
 gated count as the threshold rises; 6.0 (the committed value) should sit
-"in the tail" per its own anchor's stated intent ("past the most-levered
-consciously-accepted holding in current coverage") — I predicted a small
-single-digit percentage of the index gating at 6.0, not a large share.
+"in the tail" per its own anchor's stated intent (beyond the
+elevated-but-common 3-4x leverage zone) — I predicted a small single-digit
+percentage of the index gating at 6.0, not a large share.
 
 **Coverage**: 502/503 tickers derived (99.8%) — one failure, `GDDY`
 (SEC EDGAR read-timeout, transient network issue, not a data-availability
