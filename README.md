@@ -27,8 +27,8 @@ For a new checkout, use the commands below. For an existing clone, start
 in its root directory and skip the first two commands.
 
 ```bash
-git clone https://github.com/joe-elhajj/InvestmentEngine.git
-cd InvestmentEngine
+git clone https://github.com/joe-elhajj/equity-research-engine.git
+cd equity-research-engine
 python3.12 --version                            # must report Python 3.12.2
 python3.12 -m venv .venv
 source .venv/bin/activate
