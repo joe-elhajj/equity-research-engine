@@ -92,3 +92,27 @@ def test_annual_fpi_and_fund_routes_preserved():
         assert _classify('FPI',cd,{})[0]=='operating_fpi'
     cd=company('FUND','6726',['10-Q','N-PORT'])
     assert _classify('FUND',cd,{})[0]=='fund'
+
+
+def test_evidence_specific_reason_precedence():
+    from engine.partial_analysis import reason
+    for forms in (['S-1','10-Q'], ['F-1','10-Q'], ['S-1/A']):
+        assert reason(company('IPO','7373',forms)) == 'Recent IPO filing; first annual report not yet available'
+    assert reason(company('Q','7373',['10-Q'])) == 'Quarterly filer; annual 10-K not yet available'
+    assert reason(company('UNKNOWN','7373',['8-K'])) == 'Classification or annual filing coverage unknown; no durability score available'
+    assert reason(company('FIN','6199',['S-1','10-Q'])).startswith('Financial issuer;')
+    for form in ['10-K','20-F','40-F']:
+        assert reason(company('ANNUAL','7373',[form,'S-1','10-Q'])) is None
+
+
+def test_list_and_detail_use_same_ipo_reason_and_escape_citations(app_test_config):
+    from engine.partial_analysis import reason
+    from unittest.mock import MagicMock
+    cd = company('QNT','7373',['S-1','10-Q'], {'revenue': fact('revenue',7998000)})
+    cd.quarterly['revenue'].accn = '<script>alert(1)</script>'
+    reader = MagicMock(); reader.get_company.return_value = cd
+    row, _ = _process_one('QNT', reader, {}, 15)
+    assert row.flag == reason(cd)
+    html = render(cd,None,row.flag)
+    assert row.flag in html and '<script>' not in html and '&lt;script&gt;' in html
+    assert row.composite is None and row.universe_ranks == {}

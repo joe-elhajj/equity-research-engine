@@ -197,3 +197,119 @@ def test_request_throttle_backoff_and_rate_limit():
     assert len(starts) == 4
     assert all(b-a >= 1.05-1e-9 for a,b in zip(starts,starts[1:]))
     assert starts[2]-starts[1] == pytest.approx(2)
+
+
+@pytest.mark.parametrize('field', U.FIELDS)
+def test_one_decimal_precision_and_boundary_ties(field):
+    # NVO-like outside score lands strictly between the top two reference rows.
+    values = list(range(383)) + [500, 500, 600, 700, 800, 900]
+    values = [v / 10 for v in values]
+    data = {'scores': {field: values}}
+    assert U.rank(55, field, data) == {'percentile': 99.0, 'peers': 389}
+    assert U.rank(45, field, data)['percentile'] == 98.5  # 383/389, not P99
+    assert U._percentile(45, field, data) == pytest.approx(100 * 383 / 389)
+    assert U.rank(50, field, data)['percentile'] == round(100 * 384 / 389, 1)
+    assert U.rank(0, field, data)['percentile'] == round(50 / 389, 1)
+    assert U.rank(90, field, data)['percentile'] == round(100 * 388.5 / 389, 1)
+    for missing in (None, float('nan'), float('inf'), True):
+        assert U.rank(missing, field, data)['percentile'] is None
+    assert U.rank(50, field, None)['percentile'] is None
+
+
+def test_intersection_uses_each_full_distribution_and_full_precision(tmp_path):
+    cfg, names = _cfg(tmp_path)
+    data = _payload(cfg, names)
+    a, b = 'cat_reinvestment', 'cat_discipline'
+    data['rows']['T0'][a] = None
+    data['rows']['T1'][b] = None
+    # Opposite order deliberately makes the intersection's average tie exactly.
+    for i, row in enumerate(data['rows'].values()):
+        if row[b] is not None: row[b] = (119 - i) / 2
+    for f in (a, b): data['scores'][f] = sorted(r[f] for r in data['rows'].values() if r[f] is not None)
+    assert U._valid(data, cfg)
+    result = U.leaderboard(data, fields=(a, b), all_names=True)
+    assert result['intersection_count'] == 118
+    assert result['peer_counts'] == {a: 119, b: 119}
+    assert len(result['rows']) == 118
+    assert {'T0', 'T1'}.isdisjoint(r['ticker'] for r in result['rows'])
+    for row in result['rows']:
+        source = data['rows'][row['ticker']]
+        expected = sum(U._percentile(source[f], f, data) for f in (a,b)) / 2
+        assert row['average_selected_percentiles'] == round(expected, 1)
+        assert row['percentile'] is None and row['score'] is None
+        assert row['scores'] == {f: source[f] for f in (a,b)}
+    low = U.leaderboard(data, fields=(a,b), order='asc', all_names=True)
+    expected = sorted(result['rows'], key=lambda r: (sum(U._percentile(r['scores'][f], f, data) for f in (a,b)), r['ticker']))
+    assert low['rows'] == expected
+    # Ties in every selected distribution: ticker remains ascending in either direction.
+    for row in data['rows'].values(): row[a] = row[b] = 50.
+    data['scores'][a] = data['scores'][b] = [50.] * 120
+    for order in ('asc','desc'):
+        rows = U.leaderboard(data, fields=(a,b), order=order, all_names=True)['rows']
+        assert [r['ticker'] for r in rows] == sorted(names)
+        assert all(r['average_selected_percentiles'] == 50 for r in rows)
+
+
+def test_empty_intersection_and_full_cap(tmp_path):
+    cfg, names = _cfg(tmp_path)
+    data = _payload(cfg, names)
+    for field in U.FIELDS:
+        for order in ('asc', 'desc'):
+            rows = U.leaderboard(data, field, limit=120, order=order)['rows']
+            assert len(rows) == 120
+            assert rows[0]['ticker'] == ('T0' if order == 'asc' else 'T119')
+        assert len(U.leaderboard(data, field)['rows']) == 25
+    for fields in ((), ('invalid',), ('composite','composite')):
+        assert U.leaderboard(data, fields=fields) is None
+    for limit in (0,121,True): assert U.leaderboard(data, limit=limit) is None
+    # Every field has >=100 peers, but the AND intersection can still be empty.
+    names = [f'T{i}' for i in range(200)]
+    (tmp_path / 'universe.txt').write_text('\n'.join(names))
+    data = _payload(cfg, names)
+    for index, field in enumerate(U.FIELDS[1:]):
+        for i, row in enumerate(data['rows'].values()):
+            if index * 40 <= i < (index + 1) * 40: row[field] = None
+    data['scores'] = {f: sorted(r[f] for r in data['rows'].values() if r[f] is not None) for f in U.FIELDS}
+    assert U._valid(data, cfg)
+    result = U.leaderboard(data, fields=U.FIELDS[1:], all_names=True)
+    assert result['rows'] == [] and result['intersection_count'] == 0
+
+
+def test_api_validates_parameters_membership_and_expiry(tmp_path, monkeypatch):
+    from app import main
+    from engine import universe_rank_release as R
+    from fastapi.testclient import TestClient
+    cfg, names = _cfg(tmp_path)
+    data = _payload(cfg, names)
+    path = tmp_path / 'rank.json'; path.write_text(json.dumps(data))
+    monkeypatch.setattr(main.app.state, 'cfg', cfg, raising=False)
+    monkeypatch.setattr(R, 'load_reference', lambda cfg: U.load(cfg, path))
+    monkeypatch.setattr(U, '_process_one', lambda *a: pytest.fail('No company scoring'))
+    monkeypatch.setattr(U, 'build', lambda *a: pytest.fail('No reference build'))
+    client = TestClient(main.app)
+    for query in ('fields=', 'fields=nope', 'fields=composite,composite', 'field=nope', 'order=nope', 'limit=121', 'limit=0'):
+        assert client.get('/api/universe/leaderboard?' + query).status_code == 400
+    assert client.get('/api/universe/leaderboard?limit=oops').status_code == 422
+    response = client.get('/api/universe/leaderboard?fields=cat_reinvestment,cat_discipline&all_names=true&order=asc')
+    assert response.status_code == 200 and len(response.json()['rows']) == len(names)
+    source = data['rows']['T1']
+    rows = [dict(source,ticker='NVO'), dict(source,ticker='T1')]
+    monkeypatch.setattr(main.app.state, 'screen_jobs', {'test': {'status':'done','result':{'equities':rows}}}, raising=False)
+    scored = main.screen_status('test')['result']['equities']
+    assert [r['universe_reference_member'] for r in scored] == [False,True]
+    assert all(len(r['universe_ranks']) == 6 for r in scored)
+    data['started_at'] = (datetime.now(timezone.utc)-timedelta(days=91)).isoformat()
+    data['expires_at'] = (datetime.now(timezone.utc)-timedelta(days=1)).isoformat()
+    path.write_text(json.dumps(data))
+    assert client.get('/api/universe/leaderboard').json() == {'available':False}
+    assert main.screen_status('test')['result']['equities'][0]['universe_ranks'] == {}
+    assert main.screen_status('test')['result']['equities'][0]['universe_reference_member'] is None
+
+
+def test_snapshot_date_is_declared_date_not_build_time(tmp_path):
+    cfg,names = _cfg(tmp_path)
+    assert U.snapshot_date(cfg) is None
+    (tmp_path/'universe.txt').write_text('# S&P 500 constituents — as-of 2026-07-02\n'+'\n'.join(names))
+    assert U.snapshot_date(cfg) == '2026-07-02'
+    (tmp_path/'universe.txt').write_text('# as-of 2026-99-99\n'+'\n'.join(names))
+    assert U.snapshot_date(cfg) is None

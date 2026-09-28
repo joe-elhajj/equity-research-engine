@@ -1790,3 +1790,26 @@ tbody tr:hover .row-remove{opacity:1}
   tr{page-break-inside:avoid}
   *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
 }
+
+/* Separate reference screening from the user's watchlist; overflow stays in tables. */
+.workspace-tabs{display:flex;gap:4px;flex-wrap:wrap}
+.workspace-tabs button{font:inherit;font-weight:650;color:#e7effc;border:1px solid #91a8c3;background:transparent;padding:9px 14px;border-radius:8px;cursor:pointer}
+.workspace-tabs button[aria-selected="true"]{background:#d9e3ef;color:#20364f}
+.workspace-tabs button:focus-visible,.leaderboard-controls input:focus-visible{outline:3px solid #b6ddff;outline-offset:3px}
+#leaderboard-fields{display:flex;flex-wrap:wrap;gap:10px 18px;border:1px solid #a9bdd5;border-radius:10px;padding:12px;min-width:0;width:100%}
+#leaderboard-fields legend{font-weight:700;padding:0 6px}
+#leaderboard-fields label{display:flex;align-items:center;gap:6px;font-size:.9rem;cursor:pointer}
+#leaderboard-fields input{accent-color:#2b659e;width:17px;height:17px}
+.ranking-options{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+#leaderboard-status,#leaderboard-coverage{margin:12px 6px}
+#leaderboard-statistic:empty{display:none}
+.leaderboard-table th{white-space:normal;min-width:90px}
+.leaderboard-table th:nth-child(2){min-width:180px}
+.reference-membership{display:block;max-width:210px;white-space:normal;font-size:.68rem;line-height:1.4;color:#284f75;margin-top:5px}
+#excluded-section .sec-lbl{white-space:normal}
+@media(max-width:700px){.nav-shell{flex-wrap:wrap}.workspace-tabs{width:100%;order:3}.workspace-tabs button{flex:1}.ranking-options{width:100%}.leaderboard-controls{margin-inline:0}#leaderboard-fields label{min-height:30px}}
+@media(max-width:700px){
+  #excluded-table{table-layout:fixed;width:100%}
+  #excluded-table th:first-child{width:38%}
+  #excluded-table td.tk .tk-name{display:block;margin:4px 0 0;max-width:100%;white-space:normal;overflow-wrap:anywhere}
+}

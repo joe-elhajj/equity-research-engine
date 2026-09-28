@@ -26,11 +26,11 @@ def reason(cd: CompanyData) -> Optional[str]:
     sic = int(cd.sic) if str(cd.sic).isdigit() else None
     if sic is not None and 6000 <= sic <= 6799:
         return "Financial issuer; operating-company durability model is not comparable."
-    if any(f.startswith("10-Q") for f in forms):
-        return "Quarterly filer without an annual 10-K yet."
     if any(f.startswith(("S-1", "F-1")) for f in forms):
-        return "IPO registration filed; no annual operating report yet."
-    return "no annual report forms found; limited filing view available"
+        return "Recent IPO filing; first annual report not yet available"
+    if any(f.startswith("10-Q") for f in forms):
+        return "Quarterly filer; annual 10-K not yet available"
+    return "Classification or annual filing coverage unknown; no durability score available"
 
 
 def _num(value: float) -> str:

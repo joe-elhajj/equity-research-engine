@@ -43,8 +43,8 @@
 
   // Never show a raw Python exception string in the UI.
   function humanizeReason(flag) {
-    if (!flag) return "—";
-    if (flag.indexOf("error:") === 0) return "Data error (see server logs)";
+    if (!flag) return "Classification or filing coverage unknown";
+    if (flag.indexOf("error:") === 0) return "Data unavailable; classification or filing coverage could not be verified";
     return flag;
   }
 
@@ -758,7 +758,12 @@
   var companyOrigin = null;
   var companyRequest = 0;
 
-  function closeCompanyView() {
+  function closeCompanyView(fromHistory) {
+    if (fromHistory !== true && new URLSearchParams(location.hash.slice(1)).has("company")) {
+      if (history.state && history.state.companyView) history.back();
+      else updateRoute({company: null}, true);
+      return;
+    }
     if (companyView.classList.contains("hidden")) return;
     companyRequest++;
     companyView.classList.add("hidden");
@@ -850,8 +855,14 @@
     var council = companyReport.querySelector(".council-section");
     if (council) loadCouncil(council);
   }
-  function openCompanyView(ticker, row) {
-    companyOrigin = row;
+  function openCompanyView(ticker, row, fromHistory) {
+    if (fromHistory !== true) {
+      companyOrigin = row;
+      updateRoute({company: ticker}, false, {companyView: true});
+      return;
+    }
+    companyOrigin = row || companyOrigin;
+    companyBack.textContent = activeTab === "rankings" ? "← S&P rankings" : "← Watchlist";
     var request = ++companyRequest;
     companyTitle.textContent = ticker;
     companyReport.innerHTML = '<div class="accordion-loading">Loading analysis…</div>';
@@ -1547,14 +1558,26 @@
     function addUniverseRank(cell, field) {
       if (!freshReference(row.universe_rank_as_of, row.universe_rank_expires_at)) return;
       var r = row.universe_ranks && row.universe_ranks[field];
-      if (!r || r.percentile === null || r.percentile === undefined || !r.peers) return;
+      if (!r || !Number.isFinite(r.percentile) || r.percentile < 0 || r.percentile > 100 || r.peers < 100) return;
       var badge = document.createElement("span");
       badge.className = "universe-rank";
       badge.dataset.expiresAt = row.universe_rank_expires_at;
-      badge.textContent = "S&P P" + Math.round(r.percentile);
-      badge.title = "S&P reference percentile vs " + r.peers + " scored peers. Reference build started " +
-        (row.universe_rank_as_of || "unknown date") + ". Separate from the 0-100 model score.";
+      badge.textContent = "S&P P" + r.percentile.toFixed(1);
+      badge.title = "vs S&P 500 peers" + (row.universe_reference_member === false ? " · not in this reference index" :
+        row.universe_reference_member === true ? " · reference constituent" : "") +
+        ". Dated S&P 500 snapshot " + (row.universe_reference_snapshot_date || "date not stated") +
+        " (" + (row.universe_reference_version || "") + "); build " +
+        row.universe_rank_as_of.slice(0, 10) + "; " + r.peers + " scored peers. " +
+        "The 0–100 durability number is a weighted model score, not a percentile.";
+      badge.setAttribute("aria-label", badge.textContent + ": " + badge.title);
       cell.appendChild(badge);
+    }
+    if (row.universe_reference_member === false && freshReference(row.universe_rank_as_of, row.universe_rank_expires_at)) {
+      var membership = document.createElement("span");
+      membership.className = "reference-membership";
+      membership.dataset.expiresAt = row.universe_rank_expires_at;
+      membership.textContent = "vs S&P 500 peers · not in this reference index";
+      tickerTd.appendChild(membership);
     }
     var compositeTd = scoreCell(row.composite, fmtScore(row.composite), { composite: true, animate: animate, stagger: index });
     appendGateIndicator(compositeTd, row.gate_status, row.gate_tooltip);
@@ -2216,71 +2239,159 @@
     if (ev.key === "Escape" && !els.legendModalOverlay.classList.contains("hidden")) closeLegendModal();
   });
 
-  // The leaderboard reads a completed reference cache only. The API never
-  // starts a reference build, and no list is shown on a cache miss/error.
+  // URL state owns tabs, ranking filters and company navigation. No watchlist mutation.
   var leaderSection = document.getElementById("universe-leaderboard");
-  var leaderField = document.getElementById("leaderboard-field");
+  var leaderFields = document.getElementById("leaderboard-fields");
   var leaderBody = document.getElementById("leaderboard-body");
+  var leaderHead = document.getElementById("leaderboard-head");
   var leaderStamp = document.getElementById("universe-leaderboard-stamp");
   var leaderCoverage = document.getElementById("leaderboard-coverage");
-  var leaderboardRequest = 0;
+  var leaderStatus = document.getElementById("leaderboard-status");
+  var leaderResults = document.getElementById("leaderboard-results");
+  var leaderOrder = document.getElementById("leaderboard-order");
+  var leaderSize = document.getElementById("leaderboard-size");
+  var fieldLabels = {composite:"Total durability", cat_reinvestment:"Reinvestment", cat_quality:"Quality",
+    cat_resilience:"Resilience", cat_discipline:"Discipline", cat_optionality:"Optionality"};
+  var leaderboardRequest = 0, leaderSignature = null, activeTab = "watchlist", showAllNames = false;
   function freshReference(asOf, expiresAt) {
     var start = Date.parse(asOf), end = Date.parse(expiresAt), now = Date.now();
-    return Number.isFinite(start) && Number.isFinite(end) && start <= now && now < end &&
-      end - start <= 90 * 86400000;
+    return Number.isFinite(start) && Number.isFinite(end) && start <= now && now < end && end - start <= 90 * 86400000;
+  }
+  function selectedFields() {
+    return Array.from(leaderFields.querySelectorAll("input:checked")).map(function (input) { return input.value; });
+  }
+  function clearLeaderboard(message) {
+    leaderBody.innerHTML = "";
+    leaderHead.innerHTML = "";
+    leaderResults.classList.add("hidden");
+    leaderCoverage.textContent = "";
+    leaderStamp.textContent = "";
+    leaderStatus.textContent = message;
   }
   function expireRanks() {
-    if (!freshReference(leaderSection.dataset.asOf, leaderSection.dataset.expiresAt)) {
-      leaderSection.classList.add("hidden");
-      leaderBody.innerHTML = "";
+    if (leaderBody.children.length && !freshReference(leaderSection.dataset.asOf, leaderSection.dataset.expiresAt)) {
+      leaderboardRequest++;
+      leaderSignature = null;
+      clearLeaderboard("Reference unavailable or expired. No rankings shown; a reference build is never started automatically.");
     }
-    document.querySelectorAll(".universe-rank").forEach(function (badge) {
+    document.querySelectorAll(".universe-rank,.reference-membership").forEach(function (badge) {
       if (!(Date.now() < Date.parse(badge.dataset.expiresAt))) badge.remove();
     });
   }
   setInterval(expireRanks, 1000);
-  document.addEventListener("visibilitychange", function () { if (!document.hidden) { expireRanks(); loadLeaderboard(); } });
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) { expireRanks(); if (activeTab === "rankings") loadLeaderboard(); }
+  });
   function loadLeaderboard() {
-    var selected = leaderField.value;
-    var request = ++leaderboardRequest;
-    leaderSection.classList.add("hidden");
-    apiGet("/api/universe/leaderboard?field=" + encodeURIComponent(selected) + "&limit=25")
-      .then(function (data) {
-        if (request !== leaderboardRequest || selected !== leaderField.value) return;
-        if (!data || data.available === false || !data.rows || !data.rows.length ||
-            !freshReference(data.as_of, data.expires_at)) return;
-        leaderSection.dataset.asOf = data.as_of;
-        leaderSection.dataset.expiresAt = data.expires_at;
-        leaderBody.innerHTML = "";
-        data.rows.forEach(function (item, index) {
-          var tr = document.createElement("tr");
-          var rankCell = td(String(index + 1), {cls:"l"});
-          tr.appendChild(rankCell);
-          var company = document.createElement("td");
-          company.className = "l";
-          var button = document.createElement("button");
-          button.type = "button";
-          button.className = "leaderboard-open";
-          button.textContent = item.ticker + (item.name ? "  " + item.name : "");
-          button.setAttribute("aria-label", "Analyze " + item.ticker + (item.name ? ", " + item.name : ""));
-          tr.addEventListener("click", function () { openCompanyView(item.ticker, button); });
-          company.appendChild(button);
-          tr.appendChild(company);
-          tr.appendChild(td(typeof item.score === "number" ? item.score.toFixed(1) : null));
-          tr.appendChild(td(typeof item.percentile === "number" ? "P" + item.percentile.toFixed(1) : null));
-          leaderBody.appendChild(tr);
-        });
-        leaderStamp.textContent = "Reference " + (data.version || "") + " · Build started " +
-          new Date(data.as_of).toLocaleDateString();
-        leaderCoverage.textContent = data.peers + " scored peers for this feature; " +
-          data.scored + "/" + data.total + " companies scored overall";
-        leaderSection.classList.remove("hidden");
-      }).catch(function () { if (request === leaderboardRequest) leaderSection.classList.add("hidden"); });
+    if (activeTab !== "rankings") return;
+    var fields = selectedFields(), request = ++leaderboardRequest;
+    var signature = fields.join(",") + ":" + leaderOrder.value + ":" + showAllNames;
+    leaderSignature = signature;
+    document.getElementById("leaderboard-statistic").textContent = fields.length > 1 ?
+      "Average selected percentiles: equal-weight screening statistic, NOT a fresh S&P percentile. Only names with numeric scores for every selected field are included." : "";
+    clearLeaderboard(fields.length ? "Loading validated reference…" : "Select at least one field to rank by.");
+    if (!fields.length) return;
+    var query = new URLSearchParams({fields:fields.join(","), order:leaderOrder.value, limit:"25", all_names:String(showAllNames)});
+    apiGet("/api/universe/leaderboard?" + query.toString()).then(function (data) {
+      if (request !== leaderboardRequest || activeTab !== "rankings") return;
+      if (!data || data.available === false || !Array.isArray(data.rows) || !freshReference(data.as_of, data.expires_at)) {
+        clearLeaderboard("Reference unavailable or expired. No rankings shown; a reference build is never started automatically.");
+        return;
+      }
+      leaderSection.dataset.asOf = data.as_of;
+      leaderSection.dataset.expiresAt = data.expires_at;
+      leaderStamp.textContent = "S&P 500 snapshot " + (data.snapshot_date || "date not stated") + " · " + (data.version || "") + " · Build " + data.as_of.slice(0, 10);
+      leaderCoverage.textContent = "Coverage " + data.scored + "/" + data.total + " · Eligible intersection " + data.intersection_count +
+        " · Peers: " + fields.map(function (f) { return fieldLabels[f] + " " + data.peer_counts[f]; }).join("; ");
+      leaderStatus.textContent = data.rows.length ? "Showing " + data.rows.length + " of " + data.intersection_count + " eligible names" :
+        "No constituents have numeric scores for all selected fields.";
+      var header = document.createElement("tr");
+      var labels = ["Order", "Company"];
+      if (fields.length === 1) labels.push("Model score", "S&P percentile");
+      else {
+        fields.forEach(function (f) { labels.push(fieldLabels[f] + " · score / percentile"); });
+        labels.push("Average selected percentiles");
+      }
+      labels.forEach(function (label, index) {
+        var th = document.createElement("th"); th.textContent = label; th.scope = "col";
+        if (index < 2) th.className = "l";
+        header.appendChild(th);
+      });
+      leaderHead.appendChild(header);
+      data.rows.forEach(function (item, index) {
+        var tr = document.createElement("tr");
+        tr.appendChild(td(String(index + 1), {cls:"l"}));
+        var company = document.createElement("td"); company.className = "l";
+        var button = document.createElement("button"); button.type = "button"; button.className = "leaderboard-open";
+        button.textContent = item.ticker + (item.name ? "  " + item.name : "");
+        button.setAttribute("aria-label", "Analyze " + item.ticker + (item.name ? ", " + item.name : ""));
+        tr.addEventListener("click", function () { openCompanyView(item.ticker, button); });
+        company.appendChild(button); tr.appendChild(company);
+        if (fields.length === 1) {
+          tr.appendChild(td(Number.isFinite(item.score) ? item.score.toFixed(1) : null));
+          tr.appendChild(td(Number.isFinite(item.percentile) ? "P" + item.percentile.toFixed(1) : null));
+        } else {
+          fields.forEach(function (f) {
+            tr.appendChild(td(item.scores[f].toFixed(1) + " / P" + item.percentiles[f].toFixed(1)));
+          });
+          tr.appendChild(td(item.average_selected_percentiles.toFixed(1)));
+        }
+        leaderBody.appendChild(tr);
+      });
+      leaderResults.classList.toggle("hidden", !data.rows.length);
+    }).catch(function () {
+      if (request === leaderboardRequest) clearLeaderboard("Reference unavailable. No rankings shown; try opening this tab again.");
+    });
   }
-  leaderField.addEventListener("change", loadLeaderboard);
-
-  // ---- boot ----
-
+  function updateRoute(changes, replace, state) {
+    var params = new URLSearchParams(location.hash.slice(1));
+    Object.keys(changes).forEach(function (key) {
+      if (changes[key] === null) params.delete(key); else params.set(key, changes[key]);
+    });
+    history[replace ? "replaceState" : "pushState"](state || {}, "", "#" + params.toString());
+    applyRoute();
+  }
+  function applyRoute() {
+    var params = new URLSearchParams(location.hash.slice(1));
+    var oldTab = activeTab;
+    activeTab = params.get("tab") === "rankings" ? "rankings" : "watchlist";
+    var fields = params.has("fields") ? params.get("fields").split(",") : ["composite"];
+    leaderFields.querySelectorAll("input").forEach(function (input) { input.checked = fields.includes(input.value); });
+    leaderOrder.value = params.get("order") === "asc" ? "asc" : "desc";
+    showAllNames = params.get("all") === "true";
+    leaderSize.textContent = showAllNames ? "Show top 25" : "Show all eligible names";
+    leaderSize.setAttribute("aria-pressed", String(showAllNames));
+    document.getElementById("watchlist-panel").classList.toggle("hidden", activeTab !== "watchlist");
+    leaderSection.classList.toggle("hidden", activeTab !== "rankings");
+    document.getElementById("workspace-title").textContent = activeTab === "rankings" ? "S&P rankings" : "Watchlist";
+    ["watchlist", "rankings"].forEach(function (tab) {
+      var button = document.getElementById(tab + "-tab");
+      button.setAttribute("aria-selected", String(activeTab === tab)); button.tabIndex = activeTab === tab ? 0 : -1;
+    });
+    var signature = selectedFields().join(",") + ":" + leaderOrder.value + ":" + showAllNames;
+    if (activeTab === "rankings" && (oldTab !== activeTab || signature !== leaderSignature)) loadLeaderboard();
+    if (activeTab !== "rankings") { leaderboardRequest++; leaderSignature = null; }
+    var ticker = params.get("company");
+    if (ticker && /^[A-Za-z0-9.^-]{1,20}$/.test(ticker)) {
+      if (companyView.classList.contains("hidden") || companyTitle.textContent !== ticker) openCompanyView(ticker, null, true);
+    } else closeCompanyView(true);
+    expireRanks();
+  }
+  ["watchlist", "rankings"].forEach(function (tab) {
+    var button = document.getElementById(tab + "-tab");
+    button.addEventListener("click", function () { updateRoute({tab:tab, company:null}); });
+    button.addEventListener("keydown", function (event) {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      event.preventDefault();
+      var next = event.key === "Home" ? "watchlist" : event.key === "End" ? "rankings" : tab === "watchlist" ? "rankings" : "watchlist";
+      updateRoute({tab:next, company:null}); document.getElementById(next + "-tab").focus();
+    });
+  });
+  leaderFields.addEventListener("change", function () { updateRoute({fields:selectedFields().join(","), company:null}); });
+  leaderOrder.addEventListener("change", function () { updateRoute({order:leaderOrder.value, company:null}); });
+  leaderSize.addEventListener("click", function () { updateRoute({all:String(!showAllNames), company:null}); });
+  window.addEventListener("popstate", applyRoute);
+  window.addEventListener("hashchange", applyRoute);
   runScreen();
-  loadLeaderboard();
+  applyRoute();
 })();

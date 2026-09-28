@@ -642,7 +642,7 @@ class TestCompanyfacts404Routing:
         assert etf_row is None, "Should NOT produce an EtfRow for unclassified ticker"
         assert op_row is not None
         assert op_row.composite is None
-        assert "no annual report forms found" in op_row.flag
+        assert "Classification or annual filing coverage unknown" in op_row.flag
 
 
 # ---------------------------------------------------------------------------
@@ -741,8 +741,8 @@ class TestFinancialSicFallthrough:
         assert etf_row is None, "EQUITY quoteType must not produce EtfRow"
         assert op_row is not None
         assert op_row.excluded is True
-        assert op_row.flag == original_reason, (
-            f"Financial-issuer message must be preserved unchanged; got: {op_row.flag!r}"
+        assert op_row.flag == "Financial issuer; operating-company durability model is not comparable.", (
+            f"Financial issuer must keep the non-comparability explanation; got: {op_row.flag!r}"
         )
 
     def test_financial_sic_yfinance_failure_stays_excluded(self):
@@ -765,4 +765,4 @@ class TestFinancialSicFallthrough:
         assert etf_row is None
         assert op_row is not None
         assert op_row.excluded is True
-        assert op_row.flag == original_reason
+        assert op_row.flag == "Financial issuer; operating-company durability model is not comparable."

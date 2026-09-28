@@ -9,7 +9,7 @@ const out=process.env.RANKS_SCREENSHOT_DIR || '/tmp/limited-screenshots';fs.mkdi
  try{
  for(const [label,width,height] of [['desktop',1440,1000],['mobile',390,844]]){
   const ctx=await browser.newContext({viewport:{width,height},reducedMotion:'reduce'});
-  const page=await ctx.newPage();const errors=[],requests=[];page.on('pageerror',e=>errors.push(e.message));
+  const page=await ctx.newPage();page.setDefaultTimeout(15000);const errors=[],requests=[];page.on('pageerror',e=>errors.push(e.message));
   await ctx.route('**/*',async r=>{
    const req=r.request(),url=new URL(req.url());requests.push([req.method(),url.pathname]);
    if(url.hostname!=='filing.local')return r.abort();
@@ -30,7 +30,8 @@ const out=process.env.RANKS_SCREENSHOT_DIR || '/tmp/limited-screenshots';fs.mkdi
   assert.equal(await page.locator('.universe-rank').count(),0);
   const color=await page.locator('#excluded-table .tk-name').first().evaluate(e=>getComputedStyle(e).color);
   assert.equal(color,'rgb(82, 100, 122)');
-  await page.screenshot({path:path.join(out,'limited-'+label+'-excluded.png'),fullPage:true});
+  await page.locator('.overview-eyebrow').evaluate(e=>e.textContent='FIXTURE · cached SEC filing evidence');
+  await page.screenshot({path:path.join(out,'FIXTURE-limited-'+label+'-unscored.png'),fullPage:true});
   for(const ticker of ['QNT','SPCX','SECZ']){
    const row=page.getByRole('button',{name:'Open limited filing view for '+ticker,exact:true});
    await row.focus();await row.press('Enter');
@@ -39,11 +40,14 @@ const out=process.env.RANKS_SCREENSHOT_DIR || '/tmp/limited-screenshots';fs.mkdi
    assert(text.includes('No durability score'));
    assert.equal(await page.locator('.partial-analysis .universe-rank').count(),0);
    assert.equal(await page.getByRole('heading',{name:'Valuation & sensitivity',exact:true}).count(),0);
+   if(ticker!=='SECZ')assert(text.includes('Recent IPO filing; first annual report not yet available'));
    if(ticker==='QNT')assert(text.includes('7,998,000')&&text.includes('0001628280-26-056743'));
    if(ticker==='SPCX')assert(text.includes('7,814,000,000')&&text.includes('0001628280-26-052535'));
    if(ticker==='SECZ')assert(text.includes('pre-combination shell')&&!text.includes('Total assets'));
-   await page.screenshot({path:path.join(out,'limited-'+label+'-'+ticker+'.png')});
+   await page.locator('.company-view-kicker').evaluate(e=>e.textContent='FIXTURE · cached SEC filing evidence');
+   await page.screenshot({path:path.join(out,'FIXTURE-limited-'+label+'-'+ticker+'.png')});
    await page.locator('#company-view-back').click();
+   await page.waitForFunction(()=>document.querySelector('#company-view').classList.contains('hidden'));
    assert.equal(await row.evaluate(e=>e===document.activeElement),true);
   }
   assert.deepEqual(errors,[]);
