@@ -64,7 +64,7 @@
   }
 
   // Inline score-bar cell (the signature element) for the six 0-100
-  // universe-relative percentiles. `rawValue` (the actual number, or
+  // weighted 0-100 model scores (not universe percentile ranks). `rawValue` (the actual number, or
   // null/undefined) decides whether a bar exists AT ALL — absence-is-
   // not-zero: a missing score renders through the exact same "n/a" path
   // as td() above (no track element in the DOM whatsoever), while a
@@ -99,7 +99,7 @@
     var fill = document.createElement("div");
     fill.className = "score-fill";
     // Defensive clamp on the BAR's pixel width only — rawValue is already
-    // a 0-100 percentile by contract; this never touches displayValue,
+    // a 0-100 model score by contract; this never touches displayValue,
     // i.e. never changes the number shown, only guards the bar from
     // overflowing its track if a value were ever out of range.
     var pct = Math.max(0, Math.min(100, rawValue));
@@ -201,9 +201,9 @@
   // SIGN CONVENTION IS DELIBERATELY INVERTED vs. a naive finance UI, and
   // is CORRECT as shipped -- DO NOT "FIX" THE LINE BELOW. rawValue > 0
   // means the market is pricing in MORE growth than delivered -- bearish,
-  // maps to gap-pill-pos/--bad/red. rawValue <= 0 means delivered growth
-  // met or beat what's priced in -- bullish, maps to gap-pill-neg/--good/
-  // green. See the matching pin in styles.css beside .gap-pill-pos/neg
+  // maps to gap-pill-pos/--bad/red. rawValue < 0 means delivered growth
+  // beat what's priced in -- bullish, maps to gap-pill-neg/--good/
+  // green. A true zero is neutral rather than a negative gap. See the matching pin in styles.css beside .gap-pill-pos/neg
   // for the full rationale.
   //
   // fix/implied-growth-abstention: bracketBound is "upper" | "lower" | null
@@ -250,8 +250,10 @@
         pill.textContent = "n/a";
       }
     } else {
-      pill.className = "gap-pill " + (rawValue > 0 ? "gap-pill-pos" : "gap-pill-neg");
-      pill.textContent = displayValue;
+      pill.className = "gap-pill " + (rawValue > 0 ? "gap-pill-pos" : rawValue < 0 ? "gap-pill-neg" : "gap-pill-zero");
+      pill.title = rawValue > 0 ? "Positive gap: priced for more growth than delivered" :
+        rawValue < 0 ? "Negative gap: delivered more growth than priced in" : "Zero expectations gap";
+      pill.textContent = rawValue === 0 ? "0.0%" : displayValue;
       var magnitude = Math.min(Math.abs(rawValue), 0.30);
       var alpha = 0.06 + (magnitude / 0.30) * 0.10;
       pill.style.setProperty("--gap-alpha", alpha.toFixed(3));
@@ -746,6 +748,152 @@
       });
   }
 
+  // Full-screen company workspace: the table stays a dense scan surface,
+  // while a selected company gets its own navigable, keyboard-safe view.
+  var companyView = document.getElementById("company-view");
+  var companyReport = document.getElementById("company-view-report");
+  var companyNav = document.getElementById("company-view-nav");
+  var companyTitle = document.getElementById("company-view-title");
+  var companyBack = document.getElementById("company-view-back");
+  var companyOrigin = null;
+  var companyRequest = 0;
+
+  function closeCompanyView() {
+    if (companyView.classList.contains("hidden")) return;
+    companyRequest++;
+    companyView.classList.add("hidden");
+    document.body.classList.remove("company-view-open");
+    companyReport.innerHTML = "";
+    companyNav.innerHTML = "";
+    document.querySelector(".topnav").inert = false;
+    document.querySelector("main.wrap").inert = false;
+    if (companyOrigin && companyOrigin.isConnected) companyOrigin.focus();
+    companyOrigin = null;
+  }
+  function buildCompanyNav() {
+    companyNav.innerHTML = "";
+    var heading = document.createElement("p");
+    heading.textContent = "Explore the data";
+    heading.className = "company-nav-heading";
+    companyNav.appendChild(heading);
+    var sections = Array.prototype.slice.call(companyReport.querySelectorAll(".report-section"));
+    var order = ["Financial position", "Growth", "Margins & returns", "Valuation & sensitivity", "Data gaps", "Flags", "Council"];
+    sections.sort(function (a, b) { return order.indexOf(a.querySelector("h3").textContent) - order.indexOf(b.querySelector("h3").textContent); });
+    sections.forEach(function (section) {
+      var heading = section.querySelector("h3");
+      if (!heading) return;
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "company-nav-item";
+      button.textContent = heading.textContent.trim();
+      button.addEventListener("click", function () {
+        section.scrollIntoView({behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start"});
+        heading.focus({preventScroll:true});
+      });
+      companyNav.appendChild(button);
+    });
+  }
+  function layOutCompanySections() {
+    // The server fragment uses closed <details> for the legacy inline view.
+    // In this full-screen view only, turn them into always-visible tiles.
+    // The cache-only Flags and Council reads are triggered explicitly below;
+    // converting the markup never invokes either paid endpoint.
+    var detailsNodes = companyReport.querySelectorAll(".report-section");
+    Array.prototype.forEach.call(detailsNodes, function (details) {
+      var tile = document.createElement("section");
+      tile.className = details.className;
+      if (details.dataset.ticker) tile.dataset.ticker = details.dataset.ticker;
+      var summary = details.querySelector("summary");
+      var heading = document.createElement("h3");
+      heading.textContent = summary ? summary.textContent.trim() : "Analysis";
+      heading.tabIndex = -1;
+      tile.appendChild(heading);
+      while (details.firstChild) {
+        var child = details.firstChild;
+        if (child === summary) { details.removeChild(child); continue; }
+        tile.appendChild(child);
+      }
+      details.replaceWith(tile);
+    });
+    var tiles = companyReport.querySelectorAll(".report-section");
+    var fragment = companyReport.querySelector(".report-fragment");
+    // Keep valuation discoverable when the server has no usable inputs.
+    if (fragment && !Array.prototype.some.call(tiles, function (tile) {
+      return tile.querySelector("h3").textContent === "Valuation & sensitivity";
+    })) {
+      var missingValuation = document.createElement("section");
+      missingValuation.className = "report-section";
+      missingValuation.innerHTML = '<h3 tabindex="-1">Valuation &amp; sensitivity</h3><p class="report-caption">Valuation is unavailable for this analysis. See Data gaps for missing inputs.</p>';
+      fragment.appendChild(missingValuation);
+      tiles = companyReport.querySelectorAll(".report-section");
+    }
+    if (fragment && tiles.length > 1) {
+      var masonry = document.createElement("div");
+      masonry.className = "company-tiles";
+      var rest = Array.prototype.slice.call(tiles, 1);
+      var valuation = rest.filter(function (tile) { return tile.querySelector("h3").textContent.indexOf("Valuation") === 0; })[0];
+      if (valuation) fragment.appendChild(valuation);
+      rest.forEach(function (tile) { if (tile !== valuation) masonry.appendChild(tile); });
+      fragment.appendChild(masonry);
+    }
+    // The expectations table is wider than a phone tile. Keep every value
+    // reachable with an inner horizontal scroller instead of clipping it.
+    var gapTable = companyReport.querySelector(".gap-band-table");
+    if (gapTable) {
+      var gapScroll = document.createElement("div");
+      gapScroll.className = "scroll company-gap-scroll";
+      gapTable.parentNode.insertBefore(gapScroll, gapTable);
+      gapScroll.appendChild(gapTable);
+    }
+    var flags = companyReport.querySelector(".flags-section");
+    if (flags) loadFlags(flags);
+    var council = companyReport.querySelector(".council-section");
+    if (council) loadCouncil(council);
+  }
+  function openCompanyView(ticker, row) {
+    companyOrigin = row;
+    var request = ++companyRequest;
+    companyTitle.textContent = ticker;
+    companyReport.innerHTML = '<div class="accordion-loading">Loading analysis…</div>';
+    companyNav.innerHTML = "";
+    companyView.classList.remove("hidden");
+    document.body.classList.add("company-view-open");
+    document.querySelector(".topnav").inert = true;
+    document.querySelector("main.wrap").inert = true;
+    companyView.scrollTop = 0;
+    companyBack.focus();
+    function show(html) {
+      if (request !== companyRequest) return;
+      companyReport.innerHTML = html;
+      layOutCompanySections();
+      buildCompanyNav();
+    }
+    if (fragmentCache[ticker]) { show(fragmentCache[ticker]); return; }
+    var promise = fragmentInFlight[ticker];
+    if (!promise) {
+      promise = fetch("/api/analyze/" + encodeURIComponent(ticker) + "/fragment")
+        .then(function (response) { if (!response.ok) throw new Error("HTTP " + response.status); return response.text(); })
+        .finally(function () { delete fragmentInFlight[ticker]; });
+      fragmentInFlight[ticker] = promise;
+    }
+    promise.then(function (html) { fragmentCache[ticker] = html; show(html); })
+      .catch(function () { show('<div class="accordion-loading">Could not load analysis. Return to watchlist and try again.</div>'); });
+  }
+  companyBack.addEventListener("click", closeCompanyView);
+  document.addEventListener("keydown", function (ev) {
+    if (companyView.classList.contains("hidden")) return;
+    if (ev.key === "Escape") { ev.preventDefault(); closeCompanyView(); return; }
+    if (ev.key !== "Tab") return;
+    var focusable = Array.prototype.filter.call(companyView.querySelectorAll('button:not([disabled]),a[href],summary,input:not([disabled]),[tabindex="0"]'), function (el) {
+      return el.getClientRects().length > 0;
+    });
+    if (!focusable.length) return;
+    var first = focusable[0], last = focusable[focusable.length - 1];
+    if (!companyView.contains(document.activeElement)) { ev.preventDefault(); first.focus(); }
+    else if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last.focus(); }
+    else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
+  });
+
   // "Sources" toggle inside an expanded fragment (engine/report_html.py's
   // render_fragment): a single delegated listener, since fragment HTML is
   // injected via innerHTML after this script has already run. Toggling a
@@ -1130,19 +1278,25 @@
 
     var viewLink = document.createElement("a");
     viewLink.className = "btn council-report-link";
-    viewLink.textContent = "View report";
+    viewLink.textContent = "View decision brief";
     viewLink.href = "/api/council/" + encodeURIComponent(ticker) + "/report.html";
     viewLink.target = "_blank";
     viewLink.rel = "noopener";
 
     var pdfLink = document.createElement("a");
     pdfLink.className = "btn council-report-link";
-    pdfLink.textContent = "Download PDF";
+    pdfLink.textContent = "Decision Brief PDF";
     pdfLink.href = "/api/council/" + encodeURIComponent(ticker) + "/report.pdf";
-    pdfLink.download = ticker + "-council-review.pdf";
+    pdfLink.download = ticker + "-council-decision-brief.pdf";
 
     wrap.appendChild(viewLink);
     wrap.appendChild(pdfLink);
+    var recordLink = document.createElement("a");
+    recordLink.className = "btn council-report-link";
+    recordLink.textContent = "Full Council Record PDF";
+    recordLink.href = "/api/council/" + encodeURIComponent(ticker) + "/record.pdf";
+    recordLink.download = ticker + "-full-council-record.pdf";
+    wrap.appendChild(recordLink);
     return wrap;
   }
 
@@ -1347,7 +1501,14 @@
   // Wires the whole-row click -> accordion toggle for equity/ETF rows.
   // The remove "×" already stopPropagation()s, so it doesn't trigger this.
   function makeExpandable(tr, ticker) {
-    tr.addEventListener("click", function () { toggleAccordion(ticker, tr); });
+    tr.tabIndex = 0;
+    tr.setAttribute("role", "button");
+    tr.setAttribute("aria-label", "Open " + ticker + " company analysis");
+    tr.addEventListener("click", function () { openCompanyView(ticker, tr); });
+    tr.addEventListener("keydown", function (ev) {
+      if (ev.target !== tr) return;
+      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openCompanyView(ticker, tr); }
+    });
     return tr;
   }
 
@@ -1473,7 +1634,8 @@
     tr.appendChild(appendRemoveControl(flagCell, row.ticker, tr, etfData, els.etfSection, els.etfBody));
 
     markSortedCell(cellsByKey, sortState.etf.key);
-    return makeExpandable(tr, row.ticker);
+    tr.addEventListener("click", function () { toggleAccordion(row.ticker, tr); });
+    return tr;
   }
 
   // Excluded's own empty state (a proper icon + "No excluded securities in
@@ -1706,6 +1868,9 @@
   // renders the ticker alone, never an empty string or "Unknown" -- absence
   // propagates, per the same convention as every other renderer in this app.
   function renderSearchCandidates(candidates) {
+    // Exact-ticker confirmation owns this one popover slot, even when the
+    // independent candidate request resolves after the exact-match request.
+    if (currentSearchTicker) return;
     els.searchCandidates.innerHTML = "";
     if (!candidates.length) {
       hideSearchCandidates();
@@ -1781,6 +1946,7 @@
             els.searchStatus.textContent = "✓";
             els.searchStatus.className = "search-status found";
             currentSearchTicker = raw;
+            hideSearchCandidates();
             var label = res.name ? raw + " — " + res.name : raw;
             els.searchConfirmText.textContent = label;
             setClassificationBadge("pending", true);
@@ -1804,6 +1970,7 @@
       apiGet("/api/search_candidates/" + encodeURIComponent(rawInput))
         .then(function (res) {
           if (els.searchInput.value.trim() !== rawInput) return; // stale response
+          if (currentSearchTicker) return; // exact card won the async race
           renderSearchCandidates(res.candidates || []);
         })
         .catch(function () {
