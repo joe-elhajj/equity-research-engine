@@ -78,17 +78,19 @@ def test_chair_text_fidelity_and_no_synthetic_rationale():
     assert RC._chair_rationale(cr.chairman.text) == 'not stated'
 
 
-def test_all_safety_sections_and_review_conflicts_preserved():
+def test_full_record_keeps_sections_removed_from_brief():
     cr = council()
-    text = plain(RC.render(cr))
-    for key, section in cr.chairman.sections.items():
-        parts = RC._split_numbered_items(section) if key == "contradiction_ledger" else [section]
-        for part in parts:
-            assert plain(RC._prose(RC._labels(part))) in text
-    assert 'Unsupported claim conflicts with +22% upside.' in text
-    assert cr.meta.evidence_integrity_note in text
-    assert 'UNKNOWN' in text and 'OPEN' in text and 'RESOLVED (PARTIALLY)' in text
-    assert 'not independently verified source facts' in text
+    brief = plain(RC.render(cr))
+    full = plain(RC.render(cr, full_record=True))
+    for section in cr.chairman.sections.values():
+        assert plain(RC._prose(section)) in full
+    assert 'Unsupported claim conflicts with +22% upside.' not in brief
+    assert 'Unsupported claim conflicts with +22% upside.' in full
+    assert cr.meta.evidence_integrity_note in full
+    assert 'Evidence pointers' not in brief
+    assert 'Blind-review challenges' not in brief
+    assert 'Evidence integrity' not in brief
+    assert 'UNKNOWN' in brief and 'OPEN' in brief and 'RESOLVED (PARTIALLY)' in brief
 
 
 def test_unknown_status_and_qualified_resolution():
@@ -153,13 +155,15 @@ def test_intu_regression_preserves_chair_resolution_and_all_caveats():
                        [ReviewNote(**r) for r in raw['reviews']], ChairmanOutput(**raw['chairman']), CouncilMeta(**raw['meta']))
     before = deepcopy(asdict(cr))
     brief = plain(RC.render(cr))
-    for item in RC._split_numbered_items(cr.chairman.sections['contradiction_ledger']):
-        assert plain(RC._prose(RC._labels(item))) in brief
-    for key in ['dissent', 'risk_register', 'action_items', 'thesis_journal_delta']:
-        assert plain(RC._prose(RC._labels(cr.chairman.sections[key]))) in brief
-    assert 'mathematically contradicts' in brief
+    assert RC.render(cr).count('class="ledger-row"') == 5
+    assert 'Data gaps' in brief
+    assert 'Gross profit; Interest expense; Peer medians' in brief
+    assert 'Evidence pointers' not in brief
+    assert 'Blind-review challenges' not in brief
+    assert 'Evidence integrity' not in brief
+    assert 'INSUFFICIENT EVIDENCE' in brief
+    assert 'peer benchmarks' in brief
     assert '350.11' in brief and '0.221' in brief
-    assert 'gross_profit' in brief and 'interest_expense' in brief and 'peer_pe_median' in brief
     assert RC._chair_rationale(cr.chairman.text) in cr.chairman.text
     full = plain(RC.render(cr,full_record=True))
     for a in cr.advisors:
@@ -186,8 +190,13 @@ def test_real_intu_print_layout_opt_in(tmp_path):
     path = tmp_path / 'brief.pdf'
     path.write_bytes(html_to_pdf(RC.render(cr, company_name='Intuit Inc.')))
     info = subprocess.check_output(['pdfinfo', str(path)], text=True)
-    assert 3 <= int(re.search(r'Pages:\s+(\d+)', info).group(1)) <= 4
-    assert '612 x 792 pts (letter)' in info
+    assert int(re.search(r'Pages:\s+(\d+)', info).group(1)) == 2
+    first, details = RC.render(cr).split('<div class="brief-details">', 1)
+    assert 'The council' in first and 'Chair rationale' in first
+    assert 'Chair ledger' not in first
+    for heading in ['Chair ledger', 'Dissent', 'Data gaps', 'Thesis checkpoints', 'Next actions', 'Risks']:
+        assert heading in details
+    assert 'Evidence pointers' not in details and 'Blind-review challenges' not in details
 
 
 def test_numbered_items_keep_original_priority_numbers():
@@ -239,12 +248,23 @@ def test_integrity_excerpts_are_labelled_and_full_record_keeps_original():
 
 def test_proposed_thresholds_and_dissent_layout_are_explicit():
     html = RC.render(council())
-    assert 'not adopted or independently verified' in html
-    assert 'All numeric thresholds below are proposals.' in html
-    assert 'class="dissent challenge-dissent"' in html
-    assert '.challenge, .challenge-dissent, .checkpoints { break-before: page; }' in html
+    assert 'Chair proposals' in html
+    assert 'Dissent · summary' in html
+    assert '.brief-details { break-before: page; }' in html
     assert 'overflow-wrap: anywhere' in html
-    assert not re.search(r'(?:font-size:|font:)\s*(?:9|10)pt', RC._STYLE)
+    assert 'font-size: 9pt' in html  # provenance footer only
+
+
+def test_unknown_ledger_and_dissent_fall_back_to_source():
+    assert 'No settlement is recorded' in RC._ledger_row('No settlement is recorded.')
+    cr = council()
+    cr.chairman.sections['dissent'] = 'Unfamiliar concern remains unresolved.'
+    assert RC._dissent_summary(cr) == 'Unfamiliar concern remains unresolved.'
+
+
+def test_compact_checkpoints_keep_thresholds():
+    html = RC._short_bullets('- **Trigger 1 (margin):** If margin <25% for two years, re-review by FY2027.')
+    assert '&lt;25%' in html and 'two years' in html and 'FY2027' in html
 
 
 def test_brief_uses_consistent_display_names_without_changing_originals():

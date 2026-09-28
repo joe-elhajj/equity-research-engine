@@ -1,8 +1,8 @@
 """Read-only, extractive council exports. The cached CouncilResult is authoritative.
 
-The brief selects explicitly labelled excerpts; it never rewrites an opinion.
-Contradictions and dissent are reproduced in full, even when unusual runs
-exceed the page budget. Integrity excerpts are labelled and retain data caveats. Full Council Record retains all raw responses and metadata.
+The brief condenses cached findings for review. Full Council Record retains
+all raw responses, parsed sections and metadata; unfamiliar formats fall back
+to source excerpts rather than inventing resolutions.
 """
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ SEAT_JOBS = {
     "CHAIR": "Weighs disagreements and states the conclusion.",
 }
 # Only derived exports are versioned; council JSON keys/semantics are unchanged.
-REPORT_VERSION = "decision-brief-v3"
+REPORT_VERSION = "decision-brief-v4"
 
 
 def _labels(text: str) -> str:
@@ -202,38 +202,98 @@ def _decision(cr: CouncilResult) -> str:
     )
 
 
-def _challenge(cr: CouncilResult, flags_status: Optional[dict] = None) -> str:
+def _short_text(text: str) -> str:
+    """Remove formatting, not qualifications or numeric thresholds."""
+    text = re.sub(r"\*\*|`|(?<!\w)\*(?!\s)|(?<!\s)\*(?!\w)", "", text)
+    return _labels(re.sub(r"\s+", " ", text).strip())
+
+
+def _ledger_row(item: str) -> str:
+    label, status, _ = _status_chip(item)
+    topic = re.match(r"\*\*(.+?)\*\*", item)
+    title = topic.group(1).rstrip(".") if topic else "Chair finding"
+    body = item[topic.end():].lstrip(" —:.-") if topic else item
+    # The chair's explicit disposition states what settled, or would settle,
+    # the dispute. Keep qualifications; never infer a resolution.
+    disposition = re.search(r"\b(?:OPEN|RESOLVED|UNKNOWN)\b", body)
+    if disposition:
+        body = body[disposition.end():].lstrip("*: ")
+        if body.startswith("in favor of"):
+            body = "Resolved " + body
+        elif body.startswith("in the sense"):
+            body = "Open " + body
+    sentence = _sentences(body)[0] if body else "Settlement not stated."
+    sentence = _short_text(sentence)
+    return (f'<div class="ledger-row"><span class="status {status}">{escape(label)}</span> '
+            f'<strong>{escape(_short_text(title))}:</strong> {escape(sentence)}</div>')
+
+
+def _dissent_summary(cr: CouncilResult) -> str:
+    text = (cr.chairman.sections or {}).get("dissent", "")
+    by_name = {a.name: a for a in cr.advisors}
+    names = list(dict.fromkeys(re.findall("|".join(SEAT_LABELS), text)))
+    dissenters = [f"{SEAT_LABELS[name]}: {(by_name[name].position or 'not stated').lower()}"
+                  for name in names if name in by_name and by_name[name].position != cr.chairman.verdict]
+    reasons = []
+    for pattern, reason in [
+        (r"sensitivity|grid", "sensitivity interpretation"),
+        (r"[Nn]o thesis journal|no thesis journal", "missing thesis checkpoints"),
+        (r"peer benchmarks remain null", "missing peer benchmarks"),
+        (r"deceleration", "ongoing deceleration"),
+    ]:
+        if re.search(pattern, text):
+            reasons.append(reason)
+    if dissenters and reasons:
+        return "; ".join(dissenters) + ". Concerns: " + ", ".join(reasons) + "."
+    return _short_text(_sentences(text)[0]) if text else "not stated"
+
+
+def _short_bullets(text: str) -> str:
+    lines = re.findall(r"(?m)^- (.+)", text)
+    items = lines or _split_numbered_items(text)
+    result = []
+    for item in items:
+        # Keep every trigger and all threshold/time conditions in its first
+        # sentence. Explanations and follow-on discussion remain in the record.
+        item = re.sub(r"^\*\*Trigger \d+ \((.*?)\):\*\*", r"\1:", item)
+        item = _sentences(item)[0]
+        if " — " in item:
+            lead, tail = item.split(" — ", 1)
+            if not re.search(r"\d|\b(?:unless|except|if)\b", tail, re.I):
+                item = lead
+        result.append('<li>' + escape(_short_text(item)) + '</li>')
+    return '<ul>' + ''.join(result) + '</ul>' if result else '<p>not stated</p>'
+
+
+def _brief_details(cr: CouncilResult, flags_status: Optional[dict]) -> str:
     sections = cr.chairman.sections or {}
-    rows = []
-    for i, item in enumerate(_split_numbered_items(sections.get("contradiction_ledger")), 1):
-        label, status, _ = _status_chip(item)
-        rows.append(f'<div class="ledger"><h3><span class="status {status}">{escape(label)}</span> Chair ledger {i}</h3>'
-                    + _prose(_labels(item))
-                    + f'<p class="pointer">Evidence pointers (as cited): {_inline(_pointers(item))}</p></div>')
-    reviews = []
-    for review in cr.reviews:
-        match = re.search(r"(?:\*\*Contradiction[^*]*\*\*|(?:\(3\)\s*)?Contradiction:)\s*(.*)", review.text, re.I | re.S)
-        text = match.group(1) if match else review.text
-        reviews.append(f'<p><strong>{escape(SEAT_LABELS.get(review.reviewer, review.reviewer))} · UNKNOWN:</strong> '
-                       + _inline(_labels(text or "not stated")) + '</p>')
-    review_html = '<section><h2>Blind-review challenges · original excerpts</h2><p class="note">A–D labels are local to each blind review. Disposition here is UNKNOWN; the chair ledger states its own resolutions.</p>' + ''.join(reviews) + '</section>'
-    return ('<section class="challenge"><h2>What survived challenge</h2>'
-            '<p class="note">Model conclusions, not independently verified source facts. Status is the chair’s stated disposition; '
-            'UNKNOWN means no explicit disposition. Evidence pointers are citations, not verification.</p>'
-            + (''.join(rows) or '<p>Contradiction ledger: not stated. Review coverage UNKNOWN.</p>')
-            + '</section>' + _provenance(cr, flags_status) + _section("Dissent · preserved in full", sections.get("dissent", ""), "dissent challenge-dissent") + review_html + _integrity_bullets(cr.meta.evidence_integrity_note))
-
-
-def _provenance(cr: CouncilResult, flags_status: Optional[dict]) -> str:
+    rows = ''.join(_ledger_row(item) for item in _split_numbered_items(sections.get("contradiction_ledger")))
+    gaps = []
+    evidence = cr.meta.evidence_integrity_note or ""
+    for label, keys in [("Gross profit", ["gross_profit"]), ("Interest expense", ["interest_expense"]),
+                        ("Peer medians", ["peer_pe_median", "peer_ev_ebitda_median", "peer_fcf_yield_median", "peer comparison"])]:
+        if any(key in evidence for key in keys):
+            gaps.append(label)
+    gap_text = "; ".join(gaps) if gaps else "No recognized gaps stated; see full record."
+    # Preserve concise action and risk excerpts as well as the checkpoints.
+    actions = []
+    for item in _split_numbered_items(sections.get("action_items")):
+        item = re.sub(r"^\*\*Owner:.*?\*\*\s*—\s*", "", item)
+        actions.append(_short_text(item.split('; trigger:', 1)[0]))
+    risks = []
+    for item in _split_numbered_items(sections.get("risk_register")):
+        topic = re.match(r"\*\*(.+?)\*\*", item)
+        risks.append(_short_text(topic.group(1) if topic else item))
     meta = cr.meta
-    flags = (f"{flags_status.get('count', 'not stated')} cached flag(s); filing {flags_status.get('accession', 'not stated')}"
-             if flags_status and flags_status.get("cached") else "cached flag status not available")
-    return _section("Provenance and missing data", (
-        f"Run: {meta.convened_at}. Model: {meta.model}; prompt: {meta.prompt_version}; config: {meta.config_hash}. "
-        f"Accession: {meta.accession}. Thesis: {meta.thesis_status}. Flags: {flags}. "
-        f"Run status: {', '.join(meta.status_flags) or 'no status flags recorded'}. "
-        "The original evidence bundle is not stored in CouncilResult; source verification is unavailable from this record alone."
-    ), "provenance")
+    footer = f"Run {meta.convened_at[:10]} · {meta.model} · Prompt {meta.prompt_version} · Config {meta.config_hash} · Filing {meta.accession} · {meta.thesis_status}"
+    return ('<div class="brief-details"><section><h2>Chair ledger · disposition excerpts</h2>'
+            + (rows or '<p>Review coverage UNKNOWN; ledger not stated.</p>') + '</section>'
+            + _section("Dissent · summary", _dissent_summary(cr)) + '<div class="brief-support">'
+            + _section("Data gaps", gap_text)
+            + '<section><h2>Thesis checkpoints · Chair proposals</h2>' + _short_bullets(sections.get("thesis_journal_delta", "")) + '</section>'
+            + _section("Next actions · excerpts", "; ".join(actions) or "not stated")
+            + _section("Risks", "; ".join(risks) or "not stated")
+            + '</div>' + f'<footer class="provenance">{escape(footer)}</footer></div>')
 
 
 _STYLE = """
@@ -265,12 +325,20 @@ li { margin-bottom: 5pt; }
 .integrity-note h2 { margin-top: 5pt; }
 .integrity-note p { margin-bottom: 3pt; }
 a { color: #174b61; }
+.ledger-row { margin: 0 0 7pt; }
+.brief-details { font-size: 10pt; line-height: 1.15; }
+.brief-details h2 { font-size: 11pt; }
+.brief-support { columns: 2; column-gap: 20pt; }
+.brief-support section { break-inside: auto; }
+.brief-support li { margin-bottom: 4pt; break-inside: avoid; }
+.brief-details .status { display: inline-block; border-radius: 7pt; font-size: 9pt; line-height: 1; padding: 1pt 4pt; vertical-align: baseline; }
+.brief-details footer { font-size: 9pt; margin-top: 8pt; }
 @media print {
   .export-links { display: none; }
   section, .ledger, .dissent, .record, pre, li { break-inside: auto; }
   h1, h2, h3 { break-after: avoid; }
   p { orphans: 2; widows: 2; }
-  .challenge, .challenge-dissent, .checkpoints { break-before: page; }
+  .brief-details { break-before: page; }
   .seat { break-inside: avoid; }
 }
 """
@@ -305,15 +373,13 @@ def render(council_result: CouncilResult, quote: Optional[Quote] = None,
         body += f'<p>Chair parsed: {cr.chairman.parsed}; stored verdict: {escape(cr.chairman.verdict or "not stated")}; confidence: {cr.chairman.confidence}</p>'
     else:
         body += '<p class="note">Model conclusions; selected excerpts. Full deliberation: separate Full Council Record. Contradictions and dissent retained in full; no source facts independently verified.</p>'
-        body += _roster(cr) + _decision(cr) + _challenge(cr, flags_status)
-        sections = cr.chairman.sections or {}
-        body += _section("Thesis checkpoints · proposed by the Chair", "Criteria proposed by the Chair, not adopted or independently verified. All numeric thresholds below are proposals.\n\n" + sections.get("thesis_journal_delta", "not stated"), "checkpoints")
-        body += _section("Next actions · chair’s priority order", sections.get("action_items", ""))
-        body += _section("Risk register", sections.get("risk_register", ""))
+        body += _roster(cr) + _decision(cr) + _brief_details(cr, flags_status)
         if not cr.chairman.parsed:
             body += _section("Unparsed chair output · review required", cr.chairman.text, "dissent")
+    if full_record:
+        body += '<footer>Decision support from language models. Not investment advice. Full Council Record preserves the complete deliberation and metadata.</footer>'
     body += (f'<nav class="export-links"><a href="/api/council/{escape(cr.ticker)}/record.pdf">Full Council Record PDF</a></nav>'
-             '<footer>Decision support from language models. Not investment advice. Full Council Record preserves the complete deliberation and metadata.</footer>')
+             '')
     return f'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{escape(cr.ticker)} · {title}</title><style>{_STYLE}</style></head><body><main>{body}</main></body></html>'
 
 
