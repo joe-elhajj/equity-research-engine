@@ -1,4 +1,4 @@
-# Investment Engine
+# Fundamental Valuation
 
 A three-tier investment research system. **Tier 1** is a fully
 deterministic fundamental-analysis pipeline — SEC EDGAR filings are the
