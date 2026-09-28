@@ -1,321 +1,253 @@
-"""
-test_report_council.py — tests for engine/report_council.py's render().
-
-Two fixtures: a "full" CouncilResult with every section populated and
-realistic light-markdown prose (mirroring the exact conventions real CAT/
-NVDA/META convenes on record produced — **bold**, `code`, "- " bullets,
-"1. " numbered lists, "**OPEN**"/"**RESOLVED**" markers, "**Owner: X.**"
-tags, "- **NAME (POSITION, confidence N)**" dissent headers), and a
-"sparse" CouncilResult with an unparsed chairman (empty sections), no
-AGAINST lines, no confidence-mover text, and an unparseable review — every
-one of these must render an explicit absence marker, never silently
-disappear the section (absence-is-not-zero applies to report sections
-too, same as every other renderer in this codebase).
-"""
-
-from __future__ import annotations
+"""Extractive brief and lossless full-record regression tests (no model calls)."""
+from copy import deepcopy
+from dataclasses import asdict
+from html import unescape
+import re
 
 from engine import report_council as RC
 from engine.council import AdvisorOpinion, ChairmanOutput, CouncilMeta, CouncilResult, ReviewNote
 from engine.market import Quote
 
 
-def _meta(**overrides) -> CouncilMeta:
-    base = dict(
-        ticker="NVDA", model="claude-sonnet-5", prompt_version="v1", config_hash="ed3a4fdc366f8f1f",
-        convened_at="2026-07-05T02:57:17+00:00", accession="0001045810-26-000021",
-        thesis_status="pre_thesis", thesis_hash=None, evidence_integrity_note="none",
-        total_cost_usd=0.89, total_input_tokens=399005, total_output_tokens=9463,
-        status_flags=[], calls=[],
-    )
-    base.update(overrides)
-    return CouncilMeta(**base)
-
-
-_ADVISOR_TEXT = """The company trades at a valuation implying hypergrowth continuation. \
-Per `dcf.base.upside_vs_price` the base case shows -62.3% downside. Multiple red flags \
-point to fragility: "extended lead times of more than 12 months" (FLAGS, red).
-
-POSITION: AVOID
-AGAINST: The company has delivered 94.3% 5yr net income CAGR, vastly exceeding priced-in growth.
-CONFIDENCE: 3"""
-
-_REVIEW_TEXT_PARSED = """**Strongest: B.** It grounds the crux in the sensitivity grid itself \
-and flags a real methodological issue.
-
-**Weakest: A.** It dismisses red flags as benign without evidence.
-
-**Contradiction:** B claims the bull case is conservative while C uses the same data to argue \
-deceleration is already priced in."""
-
-_REVIEW_TEXT_UNPARSED = "Free-form review text that never uses the bold Strongest/Weakest/Contradiction convention."
-
-_CHAIRMAN_TEXT = """### VERDICT
-
-VERDICT: TRIM
+def council():
+    text = '''### VERDICT
+VERDICT: HOLD
 CONFIDENCE: 2
-Confidence would move UP a notch if growth holds above 30%; confidence would move DOWN a notch \
-if guidance misses.
-
-Note on advisor naming: some unrelated aside that should not appear in the mover text.
+Confidence would move UP if data arrives. Confidence would move DOWN if margins fall.
 
 ### CONTRADICTION_LEDGER
-
-1. **Growth durability.** Advisor A cites deceleration; Advisor B cites durability. **OPEN** — \
-settled by observing the next two quarters.
-
-2. **Base rate applicability.** BASE_RATE_OUTSIDER invokes reversion; BEAR_ADVOCATE concedes NVDA \
-has defied it for years. **RESOLVED (partially)** — both sides agree this is a prior, not a fact.
+1. **Valuation conflict.** Claims zero cushion but cites +22% upside. OPEN: missing gross_profit.
+2. **Dilution.** Shares fell. **RESOLVED (partially)**: cash quality remains unclear.
+3. No stated resolution; peer medians unavailable.
 
 ### THESIS_JOURNAL_DELTA
-
-This is confirmed **PRE-THESIS MODE** — no existing entry to audit.
-
-- **New entry required specifying operative DCF case.** *Trigger: draft by next council cycle.*
-- **Falsification trigger 1 — margin durability:** IF gross margin falls below 70%, THEN reassess.
+- If margin <25% for two years, re-review by FY2027.
 
 ### ACTION_ITEMS
-
-1. **Owner: User.** Draft the formal thesis journal entry before any trade executes.
-2. **Owner: Engine backlog.** Populate missing relative-value peer medians.
+1. Owner: user. Draft thesis before sizing.
 
 ### RISK_REGISTER
-
-1. **Valuation risk — no DCF scenario rationalizes current price.** Surfaced by BEAR_ADVOCATE.
-2. **Operational fragility — supply constraints.** Surfaced by BEAR_ADVOCATE and BULL_STEELMAN.
+1. Missing interest_expense and peers.
 
 ### DISSENT
-
-- **BULL_STEELMAN (ACCUMULATE, confidence 2)** dissents sharply, arguing the DCF architecture is \
-conservative relative to delivered growth.
-"""
-
-
-def _full_council_result() -> CouncilResult:
-    advisors = [
-        AdvisorOpinion(name="BEAR_ADVOCATE", position="AVOID", confidence=3, text=_ADVISOR_TEXT, parsed=True),
-        AdvisorOpinion(name="BULL_STEELMAN", position="ACCUMULATE", confidence=2, text=_ADVISOR_TEXT, parsed=True),
-    ]
-    reviews = [
-        ReviewNote(reviewer="BEAR_ADVOCATE", text=_REVIEW_TEXT_PARSED),
-        ReviewNote(reviewer="BULL_STEELMAN", text=_REVIEW_TEXT_UNPARSED),
-    ]
-    chairman = ChairmanOutput(
-        verdict="TRIM", confidence=2, text=_CHAIRMAN_TEXT,
-        sections={
-            "contradiction_ledger": (
-                "1. **Growth durability.** Advisor A cites deceleration; Advisor B cites durability. "
-                "**OPEN** — settled by observing the next two quarters.\n\n"
-                "2. **Base rate applicability.** BASE_RATE_OUTSIDER invokes reversion; BEAR_ADVOCATE "
-                "concedes NVDA has defied it for years. **RESOLVED (partially)** — both sides agree "
-                "this is a prior, not a fact."
-            ),
-            "thesis_journal_delta": (
-                "This is confirmed **PRE-THESIS MODE** — no existing entry to audit.\n\n"
-                "- **New entry required specifying operative DCF case.** *Trigger: draft by next council cycle.*\n"
-                "- **Falsification trigger 1 — margin durability:** IF gross margin falls below 70%, THEN reassess."
-            ),
-            "action_items": (
-                "1. **Owner: User.** Draft the formal thesis journal entry before any trade executes.\n\n"
-                "2. **Owner: Engine backlog.** Populate missing relative-value peer medians."
-            ),
-            "risk_register": (
-                "1. **Valuation risk — no DCF scenario rationalizes current price.** Surfaced by BEAR_ADVOCATE.\n\n"
-                "2. **Operational fragility — supply constraints.** Surfaced by BEAR_ADVOCATE and BULL_STEELMAN."
-            ),
-            "dissent": (
-                "- **BULL_STEELMAN (ACCUMULATE, confidence 2)** dissents sharply, arguing the DCF "
-                "architecture is conservative relative to delivered growth."
-            ),
-        },
-        parsed=True,
-    )
-    return CouncilResult(ticker="NVDA", advisors=advisors, reviews=reviews, chairman=chairman, meta=_meta())
+Bear disagrees. The chairman's verdict follows the cushion argument but requires a thesis before sizing.
+'''
+    from engine.council import _parse_chairman
+    return CouncilResult('TEST', [AdvisorOpinion(name, 'HOLD', 2,
+        'Margins fell despite rising sales.\nPOSITION: HOLD\nAGAINST: Competition may accelerate.\nCONFIDENCE: 2', True)
+        for name in RC.SEAT_LABELS],
+        [ReviewNote('BEAR_ADVOCATE', '**Strongest: A.** Cites a cash cushion.\n\n**Contradiction:** Unsupported claim conflicts with +22% upside.')],
+        _parse_chairman(text), CouncilMeta('TEST','model','v1','hash','2026-09-24','acc','pre_thesis',None,
+        'gross_profit is null; peer comparison unavailable.', .89,399701,9202,[],[{'input_tokens': 399701}]))
 
 
-def _sparse_council_result() -> CouncilResult:
-    """Unparsed chairman (no sections at all), advisors with no AGAINST
-    line, an unparseable chairman.text (no VERDICT block at all — no
-    confidence-mover derivable), and a review with no bold markers."""
-    advisors = [
-        AdvisorOpinion(name="BEAR_ADVOCATE", position=None, confidence=None, text="No structured fields here at all.", parsed=False),
-    ]
-    reviews = [ReviewNote(reviewer="BEAR_ADVOCATE", text="Totally unstructured review prose.")]
-    chairman = ChairmanOutput(verdict=None, confidence=None, text="unparseable garbage with no headers", sections={}, parsed=False)
-    return CouncilResult(ticker="TEST", advisors=advisors, reviews=reviews, chairman=chairman, meta=_meta(ticker="TEST"))
+def plain(html):
+    return unescape(re.sub('<[^>]+>', '', html))
 
 
-_QUOTE = Quote(ticker="NVDA", price=194.83, shares_outstanding=24_000.0, market_cap=4_700_000_000_000.0, source="test")
-_CONFIG = {"universe": {"version": "2026-Q3"}}
-_FLAGS_STATUS = {
-    "cached": True, "form": "10-K", "accession": "0001045810-26-000021",
-    "period_ending": "2026-01-25", "filed": "2026-02-20", "count": 7,
-}
+def test_seat_labels_and_findings():
+    html = RC.render(council())
+    for label in ['Bear case','Bull case','Assumptions check','Outside view','Execution check']:
+        assert label in html
+    assert 'Seat findings' not in html
+    assert 'Margins fell despite rising sales.' not in html
+    assert RC.render(council(), full_record=True).count('Margins fell despite rising sales.') == 5
+    assert 'steelman' not in html.lower()
+    assert 'HOLD · 2/5' in html
 
 
-class TestMasthead:
-    def test_ticker_verdict_and_meta_present(self):
-        html = RC.render(_full_council_result(), _QUOTE, _CONFIG, company_name="NVIDIA Corporation")
-        assert ">NVDA<" in html
-        assert "NVIDIA Corporation" in html
-        assert 'verdict-badge verdict-trim">TRIM</div>' in html
-        assert "claude-sonnet-5" in html
-        assert "ed3a4fdc366f8f1f" in html
-        assert "2026-Q3" in html
-
-    def test_price_and_market_cap_rendered(self):
-        html = RC.render(_full_council_result(), _QUOTE, _CONFIG)
-        assert "$194.83" in html
-        assert "$4.70T" in html
-
-    def test_missing_quote_renders_na_not_zero(self):
-        html = RC.render(_full_council_result(), quote=None, config=_CONFIG)
-        assert "n/a" in html
-        assert "$0" not in html
-
-    def test_missing_company_name_omits_it_without_crashing(self):
-        html = RC.render(_full_council_result(), _QUOTE, _CONFIG, company_name=None)
-        assert ">NVDA<" in html
+def test_missing_fields_are_explicit_never_zero():
+    cr = council()
+    cr.advisors = []
+    cr.reviews = []
+    cr.chairman = ChairmanOutput(None,None,'Unstructured uncertainty.',{},False)
+    cr.meta.evidence_integrity_note = ''
+    html = RC.render(cr)
+    assert 'not stated' in html
+    assert 'Review coverage UNKNOWN' in html
+    assert 'Unstructured uncertainty.' in html
+    assert '$0' not in html
 
 
-class TestExecutiveSummary:
-    def test_verdict_confidence_and_agent_table_present(self):
-        html = RC.render(_full_council_result(), _QUOTE, _CONFIG)
-        assert "confidence 2/5" in html
-        assert "BEAR_ADVOCATE" in html and "BULL_STEELMAN" in html
-        assert 'pos-avoid">AVOID' in html
-        assert 'pos-accumulate">ACCUMULATE' in html
-
-    def test_confidence_mover_extracted_and_stray_note_excluded(self):
-        html = RC.render(_full_council_result(), _QUOTE, _CONFIG)
-        assert "Confidence would move UP a notch if growth holds above 30%" in html
-        assert "confidence would move DOWN a notch if guidance misses" in html
-        assert "Note on advisor naming" not in html
-
-    def test_missing_confidence_mover_renders_absence_marker(self):
-        html = RC.render(_sparse_council_result(), quote=None, config=_CONFIG)
-        assert "No confidence-mover statement recorded for this run." in html
+def test_chair_text_fidelity_and_no_synthetic_rationale():
+    cr = council()
+    rationale = RC._chair_rationale(cr.chairman.text)
+    assert rationale in cr.chairman.text
+    assert RC._labels(rationale) in plain(RC.render(cr))
+    cr.chairman.text = '### VERDICT\nVERDICT: HOLD\nCONFIDENCE: 2\nConfidence would move UP if peers arrive.'
+    assert RC._chair_rationale(cr.chairman.text) == 'not stated'
 
 
-class TestEvidenceStatus:
-    def test_flags_cached_status_shows_filing_details(self):
-        html = RC.render(_full_council_result(), _QUOTE, _CONFIG, flags_status=_FLAGS_STATUS)
-        assert "10-K" in html
-        assert "7 flag(s) extracted" in html
-
-    def test_flags_not_cached_shows_absence_marker(self):
-        html = RC.render(_full_council_result(), _QUOTE, _CONFIG, flags_status={"cached": False})
-        assert "No cached Tier 2 flag extraction for this filing." in html
-
-    def test_flags_status_none_shows_absence_marker(self):
-        html = RC.render(_full_council_result(), _QUOTE, _CONFIG, flags_status=None)
-        assert "Flags cache status not available to this render." in html
-
-    def test_pre_thesis_status_shown(self):
-        html = RC.render(_full_council_result(), _QUOTE, _CONFIG)
-        assert "Pre-thesis" in html
+def test_all_safety_sections_and_review_conflicts_preserved():
+    cr = council()
+    text = plain(RC.render(cr))
+    for key, section in cr.chairman.sections.items():
+        parts = RC._split_numbered_items(section) if key == "contradiction_ledger" else [section]
+        for part in parts:
+            assert plain(RC._prose(RC._labels(part))) in text
+    assert 'Unsupported claim conflicts with +22% upside.' in text
+    assert cr.meta.evidence_integrity_note in text
+    assert 'UNKNOWN' in text and 'OPEN' in text and 'RESOLVED (PARTIALLY)' in text
+    assert 'not independently verified source facts' in text
 
 
-class TestRound1Opinions:
-    def test_each_advisor_gets_a_card_with_position_and_confidence(self):
-        html = RC.render(_full_council_result(), _QUOTE, _CONFIG)
-        assert html.count('class="advisor-card"') == 2
-        assert "confidence 3/5" in html
-
-    def test_reasoning_body_excludes_trailing_position_against_confidence_lines(self):
-        html = RC.render(_full_council_result(), _QUOTE, _CONFIG)
-        assert "hypergrowth continuation" in html  # the real reasoning prose survives
-        assert "POSITION: AVOID" not in html
-        assert "CONFIDENCE: 3" not in html
-
-    def test_against_line_pulled_into_its_own_callout(self):
-        html = RC.render(_full_council_result(), _QUOTE, _CONFIG)
-        assert "Strongest point against its own position" in html
-        assert "delivered 94.3% 5yr net income CAGR" in html
-
-    def test_missing_against_line_renders_absence_marker(self):
-        html = RC.render(_sparse_council_result(), quote=None, config=_CONFIG)
-        assert 'No "against" line recorded for this advisor.' in html
+def test_unknown_status_and_qualified_resolution():
+    assert RC._status_chip('No explicit status.')[0] == 'UNKNOWN'
+    assert RC._status_chip('RESOLVED: explained.')[0] == 'RESOLVED'
+    assert RC._status_chip('**RESOLVED (partially)** still risky.')[0] == 'RESOLVED (PARTIALLY)'
 
 
-class TestRound2PeerReview:
-    def test_parsed_review_renders_as_three_columns(self):
-        html = RC.render(_full_council_result(), _QUOTE, _CONFIG)
-        assert "grounds the crux in the sensitivity grid" in html
-        assert "dismisses red flags as benign" in html
-        assert "bull case is conservative" in html
-
-    def test_unparseable_review_falls_back_to_full_text_not_dropped(self):
-        html = RC.render(_full_council_result(), _QUOTE, _CONFIG)
-        assert "Free-form review text that never uses the bold" in html
-        assert 'colspan="3"' in html
-
-
-class TestContradictionLedger:
-    def test_open_and_resolved_chips_rendered(self):
-        html = RC.render(_full_council_result(), _QUOTE, _CONFIG)
-        assert 'status-chip status-open">OPEN<' in html
-        assert 'status-chip status-resolved">RESOLVED (PARTIALLY)<' in html
-
-    def test_absent_ledger_renders_explicit_marker(self):
-        html = RC.render(_sparse_council_result(), quote=None, config=_CONFIG)
-        assert "Not present in this council run's cached output." in html
+def test_full_record_complete_and_rendering_does_not_mutate_rounds_or_numbers():
+    cr = council()
+    before = deepcopy(asdict(cr))
+    full = plain(RC.render(cr, full_record=True))
+    RC.render(cr)
+    for a in cr.advisors:
+        assert plain(RC._prose(a.text)) in full
+    for r in cr.reviews:
+        assert plain(RC._prose(r.text)) in full
+    assert plain(RC._prose(cr.chairman.text)) in full
+    for key in before['meta']:
+        assert key in full
+    assert asdict(cr) == before
+    assert '399701' in full and '9202' in full and '0.89' in full
 
 
-class TestThesisJournalDelta:
-    def test_intro_and_checklist_rendered(self):
-        html = RC.render(_full_council_result(), _QUOTE, _CONFIG)
-        assert "PRE-THESIS MODE" in html
-        assert 'class="falsification-checklist"' in html
-        assert "New entry required specifying operative DCF case" in html
-        assert "Falsification trigger 1" in html
+def test_historical_price_never_uses_current_quote():
+    cr = council()
+    q = Quote('TEST',999,100,99900,'current')
+    assert '$999' not in RC.render(cr,quote=q)
+    cr.chairman.text += '\nThe $286.80 price is cited.'
+    assert '$286.80 (cited in council; unverified)' in RC.render(cr,quote=q)
+    cr.advisors[0].text += '\nThe $250.00 price differs.'
+    assert 'no unambiguous run-price citation' in RC.render(cr,quote=q)
 
 
-class TestActionItems:
-    def test_owner_tags_preserved(self):
-        html = RC.render(_full_council_result(), _QUOTE, _CONFIG)
-        assert '<span class="owner-tag">User</span>' in html
-        assert '<span class="owner-tag">Engine backlog</span>' in html
+def test_print_layout_uses_letter_readable_text_and_splittable_blocks():
+    html = RC.render(council())
+    assert 'size: letter' in html
+    assert '11pt/1.25' in html
+    assert 'break-inside: auto' in html
+    assert 'break-inside:avoid' not in html
+    assert 'break-after: avoid' in html
+    assert '<table' not in html
+    assert 'overflow: hidden' not in html
+    assert 'line-clamp' not in html
+    assert 'record.pdf' in html
 
 
-class TestRiskAndDissent:
-    def test_risk_register_items_rendered(self):
-        html = RC.render(_full_council_result(), _QUOTE, _CONFIG)
-        assert "no DCF scenario rationalizes current price" in html
-
-    def test_dissent_block_has_signed_header(self):
-        html = RC.render(_full_council_result(), _QUOTE, _CONFIG)
-        assert '<div class="dissent-header">BULL_STEELMAN (ACCUMULATE, confidence 2)</div>' in html
-
-    def test_absent_dissent_renders_marker(self):
-        html = RC.render(_sparse_council_result(), quote=None, config=_CONFIG)
-        assert "No dissent recorded for this run." in html
+def test_untrusted_output_escaped_and_missing_pointer_honest():
+    cr = council()
+    cr.advisors[0].text = '<script>alert(1)</script>.'
+    html = RC.render(cr, full_record=True)
+    assert '<script>' not in html and '&lt;script&gt;' in html
+    assert RC._pointers('No citation.') == 'not stated'
+    assert RC._pointers('Cites `dcf.bear.upside_vs_price`.') == 'dcf.bear.upside_vs_price'
 
 
-class TestFooterAndSafety:
-    def test_footer_has_accession_and_disclaimer(self):
-        html = RC.render(_full_council_result(), _QUOTE, _CONFIG)
-        assert "0001045810-26-000021" in html
-        assert "not investment advice" in html
+def test_intu_regression_preserves_chair_resolution_and_all_caveats():
+    import json
+    from pathlib import Path
+    raw = json.loads((Path(__file__).parent / 'fixtures/intu_council.json').read_text())
+    cr = CouncilResult(raw['ticker'], [AdvisorOpinion(**a) for a in raw['advisors']],
+                       [ReviewNote(**r) for r in raw['reviews']], ChairmanOutput(**raw['chairman']), CouncilMeta(**raw['meta']))
+    before = deepcopy(asdict(cr))
+    brief = plain(RC.render(cr))
+    for item in RC._split_numbered_items(cr.chairman.sections['contradiction_ledger']):
+        assert plain(RC._prose(RC._labels(item))) in brief
+    for key in ['dissent', 'risk_register', 'action_items', 'thesis_journal_delta']:
+        assert plain(RC._prose(RC._labels(cr.chairman.sections[key]))) in brief
+    assert 'mathematically contradicts' in brief
+    assert '350.11' in brief and '0.221' in brief
+    assert 'gross_profit' in brief and 'interest_expense' in brief and 'peer_pe_median' in brief
+    assert RC._chair_rationale(cr.chairman.text) in cr.chairman.text
+    full = plain(RC.render(cr,full_record=True))
+    for a in cr.advisors:
+        assert plain(RC._prose(a.text)) in full
+    for r in cr.reviews:
+        assert plain(RC._prose(r.text)) in full
+    assert plain(RC._prose(cr.chairman.text)) in full
+    assert asdict(cr) == before
 
-    def test_output_is_a_complete_self_contained_document(self):
-        html = RC.render(_full_council_result(), _QUOTE, _CONFIG)
-        assert html.strip().startswith("<!doctype html>")
-        assert "<style>" in html
-        assert "<script" not in html  # no scripts — a static report, not the dashboard
 
-    def test_html_injection_in_model_text_is_escaped(self):
-        """Model text is untrusted prose from an LLM — a stray <script> or
-        raw HTML tag anywhere in it must never survive into the DOM
-        unescaped."""
-        advisors = [AdvisorOpinion(
-            name="BEAR_ADVOCATE", position="AVOID", confidence=3,
-            text='<script>alert(1)</script>\nPOSITION: AVOID\nAGAINST: <img src=x onerror=alert(1)>\nCONFIDENCE: 3',
-            parsed=True,
-        )]
-        chairman = ChairmanOutput(verdict="AVOID", confidence=3, text="no verdict block", sections={}, parsed=False)
-        cr = CouncilResult(ticker="XSS", advisors=advisors, reviews=[], chairman=chairman, meta=_meta(ticker="XSS"))
-        html = RC.render(cr, quote=None, config=_CONFIG)
-        assert "<script>alert(1)</script>" not in html
-        assert "<img src=x" not in html
-        assert "&lt;script&gt;" in html
+def test_real_intu_print_layout_opt_in(tmp_path):
+    """RUN_PDF_LAYOUT_TESTS=1 runs Chrome; default suite stays subprocess-free."""
+    import os
+    import json
+    import subprocess
+    from pathlib import Path
+    import pytest
+    if os.environ.get('RUN_PDF_LAYOUT_TESTS') != '1':
+        pytest.skip('Opt-in real Chrome PDF regression')
+    from app.pdf import html_to_pdf
+    raw = json.loads((Path(__file__).parent / 'fixtures/intu_council.json').read_text())
+    cr = CouncilResult(raw['ticker'], [AdvisorOpinion(**a) for a in raw['advisors']],
+                       [ReviewNote(**r) for r in raw['reviews']], ChairmanOutput(**raw['chairman']), CouncilMeta(**raw['meta']))
+    path = tmp_path / 'brief.pdf'
+    path.write_bytes(html_to_pdf(RC.render(cr, company_name='Intuit Inc.')))
+    info = subprocess.check_output(['pdfinfo', str(path)], text=True)
+    assert 3 <= int(re.search(r'Pages:\s+(\d+)', info).group(1)) <= 4
+    assert '612 x 792 pts (letter)' in info
+
+
+def test_numbered_items_keep_original_priority_numbers():
+    html = RC._prose('1. First.\n2. Second.\n3. Third.')
+    assert 'start="1"' in html and 'start="2"' in html and 'start="3"' in html
+
+
+def test_extra_stored_chair_sections_survive_full_record():
+    cr = council()
+    cr.chairman.sections['extra'] = 'Additional uncertainty not in raw text.'
+    assert 'Additional uncertainty not in raw text.' in RC.render(cr, full_record=True)
+
+
+def test_roster_separates_jobs_from_findings_and_includes_chair():
+    cr = council()
+    html = RC.render(cr)
+    roster = html.split('<section class="roster">', 1)[1].split('</section>', 1)[0]
+    assert roster.count('class="seat"') == 6
+    assert roster.count('HOLD · 2/5') == 6
+    assert '<strong>Chair</strong>' in roster
+    for job in RC.SEAT_JOBS.values():
+        assert job in roster
+    assert 'Margins fell' not in roster  # role description is not a run finding
+    assert html.index('The council') < html.index('Chair rationale')
+    cr.advisors = []
+    assert 'not stated · not stated' in RC._roster(cr)
+    assert RC.SEAT_JOBS['BASE_RATE_OUTSIDER'] in RC._roster(cr)
+
+
+def test_integrity_excerpts_are_labelled_and_full_record_keeps_original():
+    import json
+    from pathlib import Path
+    raw = json.loads((Path(__file__).parent / 'fixtures/intu_council.json').read_text())
+    note = raw['meta']['evidence_integrity_note']
+    html = RC._integrity_bullets(note)
+    assert html.count('<li>') == 4
+    for label in ['Gross profit gap','Interest expense gap','Computed expectations signal','Peer comparison gap']:
+        assert label in html
+    for term in ['gross_profit','interest_expense','-26.9%','peer_pe_median','peer_ev_ebitda_median','peer_fcf_yield_median']:
+        assert term in html
+    assert 'not independently verified facts' in html
+    cr = council()
+    cr.meta.evidence_integrity_note = note
+    full = RC.render(cr, full_record=True)
+    assert RC._prose(note) in full
+    unknown = 'Unfamiliar data gap. Another unresolved caveat.'
+    assert all(sentence in RC._integrity_bullets(unknown) for sentence in RC._sentences(unknown))
+
+
+def test_proposed_thresholds_and_dissent_layout_are_explicit():
+    html = RC.render(council())
+    assert 'not adopted or independently verified' in html
+    assert 'All numeric thresholds below are proposals.' in html
+    assert 'class="dissent challenge-dissent"' in html
+    assert '.challenge, .challenge-dissent, .checkpoints { break-before: page; }' in html
+    assert 'overflow-wrap: anywhere' in html
+    assert not re.search(r'(?:font-size:|font:)\s*(?:9|10)pt', RC._STYLE)
+
+
+def test_brief_uses_consistent_display_names_without_changing_originals():
+    original = 'BEAR_ADVOCATE and BULL_STEELMAN (BEAR, BULL); chairman.'
+    assert RC._labels(original) == 'Bear case and Bull case (Bear case, Bull case); Chair.'
+    assert 'BEAR_ADVOCATE' in original

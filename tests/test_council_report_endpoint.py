@@ -253,3 +253,27 @@ class TestReportPdfEndpoint:
         mock_flags_call.assert_not_called()
         fastapi_app.state.anthropic_client.messages.create.assert_not_called()
         mock_pdf.assert_called_once()
+
+
+def test_brief_and_full_exports_have_separate_caches_and_lossless_json(client, tmp_path):
+    fs = _filing_sections()
+    council_cache = tmp_path / 'council'
+    original = _seed_council_cache(council_cache)
+    _seed_flags_cache(tmp_path / 'flags')
+    from dataclasses import asdict
+    with patch('app.main._FLAGS_CACHE_DIR', tmp_path / 'flags'), \
+         patch('app.main._COUNCIL_CACHE_DIR', council_cache), \
+         patch('app.main._COUNCIL_REPORTS_CACHE_DIR', tmp_path / 'reports'), \
+         patch.object(fastapi_app.state.filings_client, 'latest_10k_sections', return_value=fs), \
+         patch('app.main.run_single_ticker', return_value=_analysis_result()), \
+         patch('app.main.PDF.html_to_pdf', side_effect=lambda html: html.encode()) as pdf:
+        brief = client.get('/api/council/NVDA/report.pdf')
+        full = client.get('/api/council/NVDA/record.pdf')
+        assert 'Council Decision Brief' in brief.text
+        assert 'Full Council Record' in full.text
+        assert 'Round 1' not in brief.text and 'Round 1' in full.text
+        assert client.get('/api/council/NVDA/record.pdf').content == full.content
+        assert client.get('/api/council/NVDA/report.pdf').content == brief.content
+        assert pdf.call_count == 2
+        assert client.get('/api/council/NVDA/record.json').json() == asdict(original)
+        assert 'Full Council Record' in client.get('/api/council/NVDA/record.html').text
