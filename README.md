@@ -201,3 +201,72 @@ fixes and regression tests supersede findings in those snapshots.
 - Single-user, local-only web app — see `app/INSTALL.md`'s own
   limitations section (SQLite watchlist is single-process; the EDGAR
   disk cache isn't written atomically).
+
+## Limited filing views
+
+Excluded QNT/SPCX-style quarterly filers can open a filing-only view from the
+Excluded table. It shows supported, latest-quarter 10-Q facts with filing
+accessions, while leaving missing metrics missing. No durability score, rank,
+growth gap or DCF is displayed. IPO prospectus tables are not promoted to annual
+history. SECZ's pre-combination June 30, 2026 shell facts are withheld; they must
+not be presented as successor-company operations. Annual 20-F/40-F issuers and
+fund/ETF routing continue through their existing paths. Excluded company names
+use darker text on the light table.
+
+## Optional prebuilt S&P ranks (derived scores only)
+
+A completed local build is usable offline. Missing/stale ranks never trigger a
+reference build. Building, exporting and uploading are separate operations:
+
+```bash
+# Explicit operator build only; Yahoo <= 1 request/1.05s, SEC <= 4 requests/s.
+python -m engine.universe_ranks --config config.yaml
+# Export locally only. No vendor calls, rebuild, or upload.
+python -m engine.universe_rank_release --config config.yaml --output .cache/release-review/universe-ranks.json
+```
+
+Review that exact asset before approving any upload. Public schema 2 includes
+per-ticker weighted model scores, derived completeness scores (eligibility
+metadata), six distributions, peer counts, coverage, universe/scoring
+fingerprints, source-schema version, original build-start/completion and expiry
+times. Unscored tickers have empty rows. It contains no raw Yahoo prices, market
+caps or share counts, company names, SEC contact, config dump, local config hash,
+or exclusion narratives. Percentiles are recomputed from the distributions.
+
+Import validation reuses the hardened local schema validator. It requires
+complete ticker accounting, >=80% completeness for every scored row, >=60%
+overall coverage (**at least 302 of the current 503 tickers**), >=100 peers in
+every field, valid 0–100 scores, exact row/distribution consistency and matching
+peer counts. Unknown fields, old prototype schemas, mismatched scoring settings
+or reference-file bytes, future dates, and expired data are rejected. Expiry
+remains 90 days after the original build start; export/import cannot refresh it.
+Different SEC contact details or local reference-file paths do not invalidate
+otherwise compatible public data.
+
+The proposed release destination is the **public** GitHub repository
+`joe-elhajj/equity-research-engine`, tag `equity-ranks`, asset `universe-ranks.json`.
+The old `InvestmentEngine` remote redirects to this canonical repository.
+Its audience is anyone on the internet, including unauthenticated downloaders.
+**Stop for explicit approval of the exact reviewed file and its SHA-256 before
+creating a release or uploading/replacing an asset.** Nothing in the exporter
+publishes. Never upload aggregate_ranks.json, config.yaml, source caches or logs.
+Do not replace an existing release asset without reviewing the current release
+and separately approving that replacement. Verify the final asset and URL after
+an authorized upload before claiming availability.
+
+A clone with neither a valid local build nor a valid downloaded asset checks
+that dedicated release at most once per process per six hours. Only the named
+JSON asset on the published, non-prerelease tag is accepted; redirects, response
+size and request timeouts are bounded. Failure leaves ranks hidden. The explicit
+read-only download command is:
+
+```bash
+python -m engine.universe_rank_release --config config.yaml --download
+```
+
+Downloaded data is stored separately at `.cache/universe/published-ranks.json`.
+A valid local build causes no network request. If both sources validate, the
+newer original build-start time wins (then completion time), with local preferred
+on a tie. An older download never replaces a fresher validated downloaded copy.
+The original local cache is never overwritten. All caches/export artifacts stay
+ignored by Git; publication is an explicit reviewed release operation.

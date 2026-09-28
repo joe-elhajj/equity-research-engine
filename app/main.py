@@ -571,12 +571,21 @@ async def analyze_fragment(ticker: str):
             rendered = await _render_etf_fragment_for(tk, resolved["label"])
         else:
             res = await _get_analysis_result(tk)
+            from engine.partial_analysis import reason as partial_reason, render as render_partial
+            classification, _evidence = _engine_classify(tk, res.company, app.state.cfg.get("classification", {}).get("overrides", {}))
+            note = partial_reason(res.company)
+            if classification in ("financial", "unclassified"):
+                rendered = render_partial(res.company, res.quote.price, note or _evidence)
+                return HTMLResponse(rendered)
             # Durability scoring is pure/local (no network) — cheap enough to
             # run fresh per request rather than adding a second cache. Analyst
             # overrides apply here too, same as screen.py, so e.g. MARA shows a
             # real composite instead of "n/a".
             overrides = app.state.cfg.get("classification", {}).get("overrides", {})
             ds = D.score(res, app.state.cfg, override_classification=overrides.get(tk))
+            if ds.excluded and "financial issuer SIC" in ds.exclusion_reason:
+                rendered = render_partial(res.company, res.quote.price, ds.exclusion_reason)
+                return HTMLResponse(rendered)
             composite = ds.composite if not ds.excluded else None
             # ds.gaps (durability-scoring disclosures -- net-cash resilience,
             # mixed-basis, short-history, split-contamination) had never
@@ -1136,6 +1145,18 @@ def _run_screen_job(job_id: str, tickers: list[str]) -> None:
         }
 
 
+@app.get("/api/universe/leaderboard")
+def universe_leaderboard(field: str = "composite", limit: int = 25):
+    """Read a completed reference build only. Never launch a scoring job."""
+    from engine import universe_ranks as UR
+    if field not in UR.FIELDS or limit < 1 or limit > 50:
+        raise HTTPException(status_code=400, detail="Invalid leaderboard field or limit.")
+    from engine.universe_rank_release import load_reference
+    data = load_reference(app.state.cfg)
+    result = UR.leaderboard(data, field, limit)
+    return result if result is not None else {"available": False}
+
+
 @app.get("/api/screen")
 def start_screen(background_tasks: BackgroundTasks):
     wl = watchlist.load()
@@ -1151,6 +1172,22 @@ def screen_status(job_id: str):
     job = app.state.screen_jobs.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Unknown job_id.")
+    if job.get("status") == "done" and job.get("result"):
+        # Revalidate at read time: completed jobs can outlive or lose their cache.
+        from engine import universe_ranks as UR
+        from engine.universe_rank_release import load_reference
+        reference = load_reference(app.state.cfg)
+        result = dict(job["result"])
+        result["equities"] = []
+        for original in job["result"]["equities"]:
+            row = dict(original)
+            row.update(universe_ranks={}, universe_rank_as_of=None, universe_rank_expires_at=None)
+            if reference and UR._number(row.get("composite")) and UR._number(row.get("completeness"), .8, 1):
+                row["universe_ranks"] = {f: UR.rank(row.get(f), f, reference) for f in UR.FIELDS}
+                row["universe_rank_as_of"] = reference["started_at"]
+                row["universe_rank_expires_at"] = reference["expires_at"]
+            result["equities"].append(row)
+        return {**job, "result": result}
     return job
 
 
