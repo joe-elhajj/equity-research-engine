@@ -140,5 +140,7 @@ def test_recursive_yaml_is_rejected_clearly(tmp_path):
 def test_public_sec_placeholder_requires_personal_configuration():
     from engine.edgar import EdgarClient
 
+    # Local config is expected to contain the user's real SEC identity.
+    # Exercise placeholder rejection independently of that personal setting.
     with pytest.raises(ValueError, match='Set a real SEC User-Agent'):
-        EdgarClient(_config()['sec']['user_agent'])
+        EdgarClient('YOUR NAME - Investment Engine - your.email@example.com')
