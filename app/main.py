@@ -1020,7 +1020,7 @@ async def _load_council_result_or_404(tk: str):
     return result, filing_sections, council_prompt_version, flags_model, flags_prompt_version
 
 
-async def _render_council_report_html(tk: str, result, filing_sections, flags_model: str, flags_prompt_version: str) -> str:
+async def _render_council_report_html(tk: str, result, filing_sections, flags_model: str, flags_prompt_version: str, full_record: bool = False) -> str:
     """Gathers the report's optional context (current quote, company name,
     flags evidence status) from Tier 1/2's own EXISTING caches — never a
     new extraction or council call — then calls the pure
@@ -1065,16 +1065,17 @@ async def _render_council_report_html(tk: str, result, filing_sections, flags_mo
         }
     except Exception:
         flags_status = {"cached": False}
-    return RC.render(result, quote=quote, config=app.state.cfg, company_name=company_name, flags_status=flags_status)
+    return RC.render(result, quote=quote, config=app.state.cfg, company_name=company_name, flags_status=flags_status, full_record=full_record)
 
 
-async def _get_or_render_report_html(tk: str) -> str:
+async def _get_or_render_report_html(tk: str, full_record: bool = False) -> str:
     result, filing_sections, council_prompt_version, flags_model, flags_prompt_version = await _load_council_result_or_404(tk)
-    cached_html = RC.load_cached_html(_COUNCIL_REPORTS_CACHE_DIR, filing_sections.accession, _THESIS_TAG, council_prompt_version, flags_model)
+    cache_dir = _COUNCIL_REPORTS_CACHE_DIR / RC.REPORT_VERSION / ("record" if full_record else "brief")
+    cached_html = RC.load_cached_html(cache_dir, filing_sections.accession, _THESIS_TAG, council_prompt_version, flags_model)
     if cached_html is not None:
         return cached_html
-    html = await _render_council_report_html(tk, result, filing_sections, flags_model, flags_prompt_version)
-    RC.save_cached_html(_COUNCIL_REPORTS_CACHE_DIR, filing_sections.accession, _THESIS_TAG, council_prompt_version, flags_model, html)
+    html = await _render_council_report_html(tk, result, filing_sections, flags_model, flags_prompt_version, full_record)
+    RC.save_cached_html(cache_dir, filing_sections.accession, _THESIS_TAG, council_prompt_version, flags_model, html)
     return html
 
 
@@ -1086,22 +1087,39 @@ async def council_report_html(ticker: str):
 
 
 @app.get("/api/council/{ticker}/report.pdf")
-async def council_report_pdf(ticker: str):
+async def council_report_pdf(ticker: str, full_record: bool = False):
     tk = ticker.strip().upper()
     result, filing_sections, council_prompt_version, flags_model, flags_prompt_version = await _load_council_result_or_404(tk)
 
-    cached_pdf = RC.load_cached_pdf(_COUNCIL_REPORTS_CACHE_DIR, filing_sections.accession, _THESIS_TAG, council_prompt_version, flags_model)
+    cache_dir = _COUNCIL_REPORTS_CACHE_DIR / RC.REPORT_VERSION / ("record" if full_record else "brief")
+    cached_pdf = RC.load_cached_pdf(cache_dir, filing_sections.accession, _THESIS_TAG, council_prompt_version, flags_model)
     if cached_pdf is not None:
         return Response(content=cached_pdf, media_type="application/pdf")
 
-    html = await _get_or_render_report_html(tk)
+    html = await _get_or_render_report_html(tk, full_record)
     loop = asyncio.get_running_loop()
     try:
         pdf_bytes = await loop.run_in_executor(None, PDF.html_to_pdf, html)
     except PDF.PdfGenerationError as e:
         raise HTTPException(status_code=502, detail=f"PDF generation failed: {e}")
-    RC.save_cached_pdf(_COUNCIL_REPORTS_CACHE_DIR, filing_sections.accession, _THESIS_TAG, council_prompt_version, flags_model, pdf_bytes)
+    RC.save_cached_pdf(cache_dir, filing_sections.accession, _THESIS_TAG, council_prompt_version, flags_model, pdf_bytes)
     return Response(content=pdf_bytes, media_type="application/pdf")
+
+
+@app.get("/api/council/{ticker}/record.html", response_class=HTMLResponse)
+async def council_record_html(ticker: str):
+    return HTMLResponse(await _get_or_render_report_html(ticker.strip().upper(), True))
+
+
+@app.get("/api/council/{ticker}/record.pdf")
+async def council_record_pdf(ticker: str):
+    return await council_report_pdf(ticker, full_record=True)
+
+
+@app.get("/api/council/{ticker}/record.json")
+async def council_record_json(ticker: str):
+    result, *_ = await _load_council_result_or_404(ticker.strip().upper())
+    return asdict(result)
 
 
 # ---------------------------------------------------------------------------
