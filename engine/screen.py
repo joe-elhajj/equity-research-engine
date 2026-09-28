@@ -622,7 +622,8 @@ def _process_one(
         if etf_row is not None:
             return None, etf_row
         limited = _empty_row(
-            ticker, ds.exclusion_reason, excluded=True,
+            ticker, "Financial issuer; operating-company durability model is not comparable."
+            if "financial issuer SIC" in ds.exclusion_reason else ds.exclusion_reason, excluded=True,
             completeness=ds.data_completeness, config_hash=ds.config_hash,
             universe_version=universe_version, name=cd.name,
         )

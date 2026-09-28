@@ -1,6 +1,7 @@
 # Reference ranks and leaderboard
 
-The leaderboard and watchlist badges read `.cache/universe/aggregate_ranks.json`.
+The S&P rankings tab and watchlist badges read a complete validated local or
+compatible downloaded reference through `load_reference()`.
 They never launch a reference build. Model scores are weighted 0–100 scores;
 S&P reference percentiles are a separate comparison against the dated, local
 constituent snapshot. Multiple share classes count as separate reference tickers.
@@ -36,9 +37,65 @@ content from an open page. Missing/stale cache responses render no ranks.
 
 Percentile = 100 × (count below + 0.5 × count equal) / field peer count, rounded
 to one decimal. Identical cohorts receive P50. The reference includes a target
-when it is a constituent. Leaderboard rows sort score descending, then ticker
-ascending; the first column is display order, while tied scores share the same
-percentile. Watchlist compact badges round that percentile to a whole number.
+when it is a constituent. Both watchlist badges and the ranking table display
+one decimal (P98.5 stays P98.5). Membership is taken from validated reference
+row keys, including unscored constituent rows, not inferred from a company's
+name or ticker. Nonmembers are labeled “vs S&P 500 peers · not in this reference
+index.” The snapshot's declared date and version are distinct from its build
+date; a fresh build does not imply current index membership.
+
+## Rankings tab and filters
+
+Watchlist is the default tab and keeps Equities, ETFs/Funds and “Not scored -
+classification or filing limits” together. The S&P rankings tab requests its
+list only when opened. The URL hash records the tab, selected fields, order,
+Top 25/all choice and open company; refresh and browser back/forward restore
+that state. Analysis never adds a constituent to the watchlist.
+
+Top 25 and Highest first are defaults. Show all eligible names is bounded by
+the configured snapshot's ticker count (503 currently), not a request to score
+or fetch companies. Lowest first lets reviewers inspect the bottom; the first
+column is labeled Order in both directions. Ticker ascending breaks exact
+ties. Single-field ordering uses the unrounded model score and ordinary field
+percentile.
+
+The accessible Rank by checkbox group selects one or more of the six fields.
+Multiple fields use an AND intersection: every selected score must be numeric,
+with no null-to-zero conversion. Each percentile uses its own **full validated
+field distribution**, not the smaller intersection. Sorting uses the equal-
+weight average of unrounded selected percentiles; rounding is only for display.
+“Average selected percentiles” is a screening statistic, **not a fresh S&P
+percentile**. The table shows each selected score/percentile, the intersection
+count, each field's peer count and overall coverage. Zero selection makes no
+ranking request. Missing/expired references show an explicit unavailable state
+and no ranks, without starting a build.
+
+The read-only endpoint retains `field` compatibility and accepts `fields` as a
+comma-separated unique subset, `order=asc|desc`, `limit` from 1 through snapshot
+count (default 25), and `all_names=true`. Invalid/empty/duplicate fields and
+out-of-bound limits are rejected. All mode still returns only eligible rows
+from the validated snapshot. No universe, cache schema, eligibility, scoring or
+freshness settings are changed.
+
+## Read-only evidence checked for this UI correction
+
+On 2026-09-28, local cached NVO filings reproduced an unrounded durability score
+of **84.83931600204866**, completeness 0.80, without market or model calls. The
+validated July 2 snapshot, built September 28, contains 503 tickers and 389
+composite peers; NVO is not a constituent. Its comparison is 383 / 389 × 100 =
+98.45758354755784%, displayed **P98.5**. The same reference has ANET at
+84.63640999115995 / P98.3 and LULU at 85.64832096838278 / P98.6. These are dated
+verification observations, not new live scores or reference updates.
+
+Cached SEC submissions show QNT and SPCX both have S-1 registration evidence,
+10-Qs and no annual report, so IPO wording takes precedence over quarterly-only
+wording. QNT's 10-Q is accession 0001628280-26-056743 (2026-08-13); SPCX's is
+0001628280-26-052535 (2026-08-04). SECZ has SIC 6199 and accession
+0001628280-26-056788 (2026-08-13); its June 30 pre-combination shell facts remain
+withheld. Financial non-comparability takes precedence over IPO wording.
+Annual 20-F/40-F and fund routes are unchanged. A missing annual report alone
+never establishes IPO status, and the unscored list and limited view share the
+same evidence-specific reason.
 
 ## Build approval estimate — 2026-09-28
 
@@ -108,10 +165,14 @@ mismatched caches, date/coverage/distribution validation, resumable checkpoints,
 exclusions, tie handling, all fields, and read-only endpoint behavior.
 
 `tests/browser_universe_ranks.cjs` uses Playwright with an isolated Chrome
-profile and intercepts all application requests. It checks desktop 1440×1000
-and mobile 390×844, all six fields, fresh badges, missing/stale hiding, row
-navigation/back, no non-GET requests, no unexpected/paid endpoints, and no page
-horizontal overflow. Screenshots are clearly labeled fixtures.
+profile and intercepts all application requests. It checks desktop 1440×1050
+and mobile 390×844, all six single fields, multi-field AND selection, zero
+selection, races, Top 25/all, highest/lowest, URL refresh/back/forward, lazy
+loading, precision/membership labels, missing/stale/live expiry, no non-GET or
+unexpected/paid requests, and no document overflow. Screenshots are labeled
+FIXTURE. `tests/browser_partial_analysis.cjs` also checks cached QNT/SPCX facts,
+SECZ shell suppression, contrast, keyboard analysis and back navigation using
+an explicit `LIMITED_VIEWS` fixture path.
 
 ```sh
 python -m pytest -q

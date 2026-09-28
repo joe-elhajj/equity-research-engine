@@ -584,7 +584,7 @@ async def analyze_fragment(ticker: str):
             overrides = app.state.cfg.get("classification", {}).get("overrides", {})
             ds = D.score(res, app.state.cfg, override_classification=overrides.get(tk))
             if ds.excluded and "financial issuer SIC" in ds.exclusion_reason:
-                rendered = render_partial(res.company, res.quote.price, ds.exclusion_reason)
+                rendered = render_partial(res.company, res.quote.price, partial_reason(res.company) or "Financial issuer; operating-company durability model is not comparable.")
                 return HTMLResponse(rendered)
             composite = ds.composite if not ds.excluded else None
             # ds.gaps (durability-scoring disclosures -- net-cash resilience,
@@ -1164,14 +1164,26 @@ def _run_screen_job(job_id: str, tickers: list[str]) -> None:
 
 
 @app.get("/api/universe/leaderboard")
-def universe_leaderboard(field: str = "composite", limit: int = 25):
+def universe_leaderboard(field: str = "composite", limit: int = 25,
+                         fields: str | None = None, order: str = "desc", all_names: bool = False):
     """Read a completed reference build only. Never launch a scoring job."""
     from engine import universe_ranks as UR
-    if field not in UR.FIELDS or limit < 1 or limit > 50:
-        raise HTTPException(status_code=400, detail="Invalid leaderboard field or limit.")
+    selected = tuple(fields.split(",")) if fields is not None else (field,)
+    if (field not in UR.FIELDS or not selected or len(selected) > len(UR.FIELDS)
+        or len(set(selected)) != len(selected) or any(f not in UR.FIELDS for f in selected)
+        or order not in ("asc", "desc") or limit < 1):
+        raise HTTPException(status_code=400, detail="Invalid ranking fields, order or limit.")
+    try:
+        snapshot_count = len(UR.reference(app.state.cfg)[0])
+    except (OSError, ValueError):
+        return {"available": False}
+    if limit > snapshot_count:
+        raise HTTPException(status_code=400, detail="Limit exceeds the reference snapshot ticker count.")
     from engine.universe_rank_release import load_reference
     data = load_reference(app.state.cfg)
-    result = UR.leaderboard(data, field, limit)
+    result = UR.leaderboard(data, field, limit, fields=selected, order=order, all_names=all_names)
+    if result is not None:
+        result["snapshot_date"] = UR.snapshot_date(app.state.cfg)
     return result if result is not None else {"available": False}
 
 
@@ -1195,13 +1207,18 @@ def screen_status(job_id: str):
         from engine import universe_ranks as UR
         from engine.universe_rank_release import load_reference
         reference = load_reference(app.state.cfg)
+        snapshot_date = UR.snapshot_date(app.state.cfg) if reference else None
         result = dict(job["result"])
         result["equities"] = []
         for original in job["result"]["equities"]:
             row = dict(original)
-            row.update(universe_ranks={}, universe_rank_as_of=None, universe_rank_expires_at=None)
+            row.update(universe_ranks={}, universe_rank_as_of=None, universe_rank_expires_at=None,
+                       universe_reference_member=None, universe_reference_version=None, universe_reference_snapshot_date=None)
             if reference and UR._number(row.get("composite")) and UR._number(row.get("completeness"), .8, 1):
                 row["universe_ranks"] = {f: UR.rank(row.get(f), f, reference) for f in UR.FIELDS}
+                row["universe_reference_member"] = row.get("ticker", "").upper() in reference["rows"]
+                row["universe_reference_version"] = reference["key"]["version"]
+                row["universe_reference_snapshot_date"] = snapshot_date
                 row["universe_rank_as_of"] = reference["started_at"]
                 row["universe_rank_expires_at"] = reference["expires_at"]
             result["equities"].append(row)

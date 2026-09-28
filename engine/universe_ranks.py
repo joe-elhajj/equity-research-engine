@@ -10,6 +10,7 @@ import hashlib
 import json
 import math
 import os
+import re
 from bisect import bisect_left, bisect_right
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -40,6 +41,19 @@ def reference(cfg: dict) -> tuple[list[str], str]:
     if len(names) != len(set(names)) or not names:
         raise ValueError("Reference ticker list empty or contains duplicates")
     return names, hashlib.sha256(raw).hexdigest()
+
+
+def snapshot_date(cfg: dict) -> str | None:
+    """Date declared by the hash-validated constituent file, not the build date."""
+    path = Path(cfg.get("universe", {}).get("file", "config/sp500_universe.txt"))
+    try:
+        match = re.search(r"(?m)^#.*?as-of (\d{4}-\d{2}-\d{2})\b", path.read_text())
+        if match:
+            datetime.strptime(match[1], "%Y-%m-%d")
+            return match[1]
+    except (OSError, ValueError):
+        pass
+    return None
 
 
 def key(cfg: dict) -> dict:
@@ -128,31 +142,65 @@ def load(cfg: dict, cache: Path = CACHE) -> dict | None:
         return None
 
 
-def rank(value: float | None, field: str, data: dict | None) -> dict:
-    if data is None or field not in FIELDS:
-        return {"percentile": None, "peers": 0}
-    values = data["scores"][field]
-    if value is None or not isinstance(value, (int, float)) or not math.isfinite(value) or len(values) < MIN_PEERS:
-        return {"percentile": None, "peers": len(values)}
-    # Midrank for ties: avoids 0th percentile for all names in an identical
-    # distribution; the target is compared with the reference cohort itself.
-    left, right = bisect_left(values, value), bisect_right(values, value)
-    return {"percentile": round(100 * (left + (right - left) / 2) / len(values), 1), "peers": len(values)}
-
-
-def leaderboard(data: dict | None, field: str = "composite", limit: int = 25) -> dict | None:
-    """Rank scored reference names only; returns no list without a valid cache."""
-    if data is None or field not in FIELDS or not isinstance(limit, int) or not 1 <= limit <= 50:
+def _percentile(value, field, data):
+    """Full-precision midrank; presentation rounding happens only at the edge."""
+    if data is None or field not in FIELDS or not _number(value):
         return None
     values = data["scores"][field]
-    entries = [(ticker, row) for ticker, row in data["rows"].items()
-               if field in row and row[field] is not None]
-    entries.sort(key=lambda pair: (-pair[1][field], pair[0]))
-    return {"field": field, "as_of": data["started_at"], "expires_at": data["expires_at"], "version": data["key"]["version"],
-            "peers": len(values), "scored": data["scored"], "total": data["total"],
-            "rows": [{"ticker": ticker, "name": row.get("name"), "score": row[field],
-                      "percentile": rank(row[field], field, data)["percentile"]}
-                     for ticker, row in entries[:limit]]}
+    if len(values) < MIN_PEERS:
+        return None
+    left, right = bisect_left(values, value), bisect_right(values, value)
+    return 100 * (left + (right - left) / 2) / len(values)
+
+
+def rank(value: float | None, field: str, data: dict | None) -> dict:
+    percentile = _percentile(value, field, data)
+    peers = len(data["scores"][field]) if data is not None and field in FIELDS else 0
+    return {"percentile": round(percentile, 1) if percentile is not None else None, "peers": peers}
+
+
+def leaderboard(data: dict | None, field: str = "composite", limit: int = 25,
+                *, fields: tuple[str, ...] | None = None, order: str = "desc",
+                all_names: bool = False) -> dict | None:
+    """Screen only validated reference rows; never derive scores or fetch companies.
+
+    Caller supplies a complete cache validated by load_reference. Multi-field
+    ordering uses the equal-weight mean of full-precision per-field midranks,
+    never a new percentile against the intersection. Ticker breaks exact ties.
+    """
+    selected = fields if fields is not None else (field,)
+    if (data is None or not selected or len(selected) > len(FIELDS)
+        or len(set(selected)) != len(selected) or any(f not in FIELDS for f in selected)
+        or order not in ("asc", "desc") or type(limit) is not int
+        or not 1 <= limit <= data["total"]):
+        return None
+    selected = tuple(f for f in FIELDS if f in selected)
+    multi = len(selected) > 1
+    entries = []
+    for ticker, row in data["rows"].items():
+        if not row or not all(_number(row.get(f)) for f in selected):
+            continue
+        percentiles = {f: _percentile(row[f], f, data) for f in selected}
+        if any(v is None for v in percentiles.values()):
+            continue
+        average = sum(percentiles.values()) / len(selected)
+        entries.append((average if multi else row[selected[0]], ticker, {
+            "ticker": ticker, "name": row.get("name"),
+            "score": None if multi else row[selected[0]],
+            "percentile": None if multi else round(percentiles[selected[0]], 1),
+            "scores": {f: row[f] for f in selected},
+            "percentiles": {f: round(percentiles[f], 1) for f in selected},
+            "average_selected_percentiles": round(average, 1) if multi else None,
+        }))
+    sign = -1 if order == "desc" else 1
+    entries.sort(key=lambda entry: (sign * entry[0], entry[1]))
+    cap = data["total"] if all_names else limit
+    return {"field": selected[0] if not multi else None, "fields": list(selected), "order": order,
+            "as_of": data["started_at"], "expires_at": data["expires_at"], "version": data["key"]["version"],
+            "peers": len(data["scores"][selected[0]]) if not multi else None,
+            "peer_counts": {f: len(data["scores"][f]) for f in selected},
+            "intersection_count": len(entries), "scored": data["scored"], "total": data["total"],
+            "rows": [entry[2] for entry in entries[:cap]]}
 
 
 def _build(cfg: dict, cache: Path = CACHE, *, progress=None) -> dict:

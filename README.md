@@ -204,14 +204,16 @@ fixes and regression tests supersede findings in those snapshots.
 
 ## Limited filing views
 
-Excluded QNT/SPCX-style quarterly filers can open a filing-only view from the
-Excluded table. It shows supported, latest-quarter 10-Q facts with filing
-accessions, while leaving missing metrics missing. No durability score, rank,
-growth gap or DCF is displayed. IPO prospectus tables are not promoted to annual
-history. SECZ's pre-combination June 30, 2026 shell facts are withheld; they must
-not be presented as successor-company operations. Annual 20-F/40-F issuers and
-fund/ETF routing continue through their existing paths. Excluded company names
-use darker text on the light table.
+**Not scored - classification or filing limits** keeps unsupported names separate
+from scored equities. S-1/F-1 evidence with no annual report gets the recent-IPO
+reason; a 10-Q without IPO evidence gets the quarterly-only reason. Financial
+issuers get an operating-model non-comparability explanation; unknown coverage
+stays unknown. The list and company detail use the same reason.
+
+The filing-only view shows supported latest-quarter 10-Q facts with filing
+accessions and leaves missing metrics missing. No durability score, rank,
+growth gap or DCF is displayed. SECZ's pre-combination June 30, 2026 shell facts
+remain withheld. Annual 20-F/40-F issuers and fund/ETF routing are unchanged.
 
 ## Optional prebuilt S&P ranks (derived scores only)
 
@@ -270,3 +272,20 @@ newer original build-start time wins (then completion time), with local preferre
 on a tie. An older download never replaces a fresher validated downloaded copy.
 The original local cache is never overwritten. All caches/export artifacts stay
 ignored by Git; publication is an explicit reviewed release operation.
+
+
+### Watchlist and S&P rankings
+
+The header separates your Watchlist (the default) from **S&P rankings**, which
+loads a completed reference only when opened. The URL preserves the tab and
+filters across refresh and analysis/back navigation. Rankings start with Total
+durability, Top 25 and Highest first; select multiple fields, show all eligible
+constituents or switch to Lowest first to screen the benchmark's other end.
+
+Percentile badges keep one decimal and compare against the dated S&P 500
+snapshot, while durability remains a weighted 0–100 model score. Outside-index
+watchlist names are explicitly labeled. Multi-field mode requires every
+selected score and displays **Average selected percentiles**, an equal-weight
+screening statistic rather than a new S&P percentile. Missing/expired reference
+data shows an unavailable state and never starts a build. See
+[reference semantics and verification](docs/universe_ranks.md).

@@ -11,6 +11,10 @@
 <header class="topnav">
   <div class="nav-shell">
     <div class="wordmark">Equity Research</div>
+    <nav class="workspace-tabs" role="tablist" aria-label="Research views">
+      <button type="button" id="watchlist-tab" role="tab" aria-selected="true" aria-controls="watchlist-panel">Watchlist</button>
+      <button type="button" id="rankings-tab" role="tab" aria-selected="false" aria-controls="universe-leaderboard" tabindex="-1">S&amp;P rankings</button>
+    </nav>
 
     <div class="topnav-actions">
       <button id="legend-btn" class="btn btn-icon" aria-label="Chip legend">
@@ -50,7 +54,7 @@
   </div>
   <section class="overview-hero" aria-label="Watchlist overview">
     <p class="overview-eyebrow">RESEARCH WORKSPACE</p>
-    <h1>Watchlist</h1>
+    <h1 id="workspace-title">Watchlist</h1>
     <div class="search-wrap">
       <div class="search-box">
         <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
@@ -72,6 +76,33 @@
 
 <main class="wrap">
 
+  <section id="universe-leaderboard" class="table-section universe-leaderboard hidden" role="tabpanel" aria-labelledby="rankings-tab">
+    <div class="sec-head"><div class="sec-lbl">S&amp;P 500 reference rankings</div><span id="universe-leaderboard-stamp" class="sort-caption"></span></div>
+    <p class="leaderboard-note">The dated S&amp;P 500 snapshot is the benchmark for percentiles. Only its constituents appear here. Durability is a weighted 0–100 model score, not a percentile.</p>
+    <div class="leaderboard-controls">
+      <fieldset id="leaderboard-fields"><legend>Rank by</legend>
+        <label><input type="checkbox" value="composite" checked> Total durability</label>
+        <label><input type="checkbox" value="cat_reinvestment"> Reinvestment</label>
+        <label><input type="checkbox" value="cat_quality"> Quality</label>
+        <label><input type="checkbox" value="cat_resilience"> Resilience</label>
+        <label><input type="checkbox" value="cat_discipline"> Discipline</label>
+        <label><input type="checkbox" value="cat_optionality"> Optionality</label>
+      </fieldset>
+      <div class="ranking-options"><label for="leaderboard-order">Order</label>
+        <select id="leaderboard-order"><option value="desc">Highest first</option><option value="asc">Lowest first</option></select>
+        <button type="button" id="leaderboard-size" class="btn" aria-pressed="false">Show all eligible names</button>
+      </div>
+    </div>
+    <p id="leaderboard-coverage" class="leaderboard-coverage"></p>
+    <p id="leaderboard-statistic" class="leaderboard-note"></p>
+    <p id="leaderboard-status" class="leaderboard-note" role="status" aria-live="polite"></p>
+    <div id="leaderboard-results" class="surface hidden"><div class="scroll" tabindex="0" aria-label="Reference rankings table"><table class="leaderboard-table">
+      <thead id="leaderboard-head"></thead><tbody id="leaderboard-body"></tbody>
+    </table></div></div>
+    <p class="leaderboard-note">Select a company to analyze it without adding it to your watchlist. Uses a complete validated reference; never builds one automatically.</p>
+  </section>
+
+  <div id="watchlist-panel" role="tabpanel" aria-labelledby="watchlist-tab">
   <div id="status-banner" class="status-banner hidden"></div>
 
   <div id="empty-state" class="empty-state hidden">
@@ -80,24 +111,6 @@
     </svg>
     <p>Your watchlist is empty. Search a ticker above to get started.</p>
   </div>
-
-  <section id="universe-leaderboard" class="table-section universe-leaderboard hidden" aria-label="S&amp;P reference leaderboard">
-    <div class="sec-head"><div class="sec-lbl">S&amp;P score leaderboard</div><span id="universe-leaderboard-stamp" class="sort-caption"></span></div>
-    <div class="leaderboard-controls"><label for="leaderboard-field">Rank by</label>
-      <select id="leaderboard-field">
-        <option value="composite">Total durability</option>
-        <option value="cat_reinvestment">Reinvestment</option>
-        <option value="cat_quality">Quality</option>
-        <option value="cat_resilience">Resilience</option>
-        <option value="cat_discipline">Discipline</option>
-        <option value="cat_optionality">Optionality</option>
-      </select><span id="leaderboard-coverage" class="leaderboard-coverage"></span></div>
-    <div class="surface"><div class="scroll"><table class="leaderboard-table">
-      <thead><tr><th class="l">Rank</th><th class="l">Company</th><th>Model score</th><th>S&amp;P percentile</th></tr></thead>
-      <tbody id="leaderboard-body"></tbody>
-    </table></div></div>
-    <p class="leaderboard-note">Select a company to analyze it. Scores and ranks reflect a cached reference build, not live prices.</p>
-  </section>
 
   <section id="equities-section" class="table-section hidden">
     <div class="sec-head"><div class="sec-lbl">Equities</div><div id="equities-sort-caption" class="sort-caption"></div></div>
@@ -142,7 +155,7 @@
   </section>
 
   <section id="excluded-section" class="table-section hidden">
-    <div class="sec-head"><div class="sec-lbl">Excluded</div></div>
+    <div class="sec-head"><div class="sec-lbl">Not scored - classification or filing limits</div></div>
     <div class="surface">
       <div id="excluded-scroll" class="scroll">
         <table id="excluded-table">
@@ -159,7 +172,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/>
         </svg>
-        <span>No excluded securities in this run.</span>
+        <span>All names in this run have a supported scoring or fund view.</span>
       </div>
     </div>
   </section>
@@ -188,6 +201,7 @@
 
   <p id="meta-line" class="meta-line hidden"></p>
 
+  </div>
 </main>
 
 <div id="company-view" class="company-view hidden" role="dialog" aria-modal="true" aria-labelledby="company-view-title">
