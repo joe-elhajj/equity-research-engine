@@ -124,6 +124,9 @@ class TestClickRemoveConfirmRowGone:
 
 var expandedRows = {{}};
 var bannerCalls = [];
+var leaderWatchlist = {{checked: false}};
+var leaderboardRefreshes = 0;
+function loadLeaderboard() {{ leaderboardRefreshes++; }}
 function showBanner(text, isError) {{ bannerCalls.push({{ text: text, isError: isError }}); }}
 var closeOpenRemoveConfirm = null;
 
@@ -164,6 +167,7 @@ setTimeout(function () {{
     fetchUrl: global.__lastFetchUrl,
     fetchMethod: global.__lastFetchOpts.method,
     bannerCalls: bannerCalls,
+    leaderboardRefreshes: leaderboardRefreshes,
     wrapShowsTrigger: wrap.children[0] === trigger,
   }}));
 }}, 20);
@@ -219,6 +223,14 @@ console.log(JSON.stringify({{
     def test_no_error_banner_on_success(self):
         result = _run(self._harness())
         assert result["bannerCalls"] == []
+
+    def test_removal_refreshes_selected_filter_without_rescreening(self):
+        result = _run(self._harness(extra_setup="leaderWatchlist.checked = true;"))
+        assert result["leaderboardRefreshes"] == 1
+        assert result["fetchMethod"] == "DELETE"
+        assert result["bannerCalls"] == []
+        assert _run(self._harness())["leaderboardRefreshes"] == 0
+        assert _run(self._harness(extra_setup="leaderWatchlist.checked = true;", fetch_ok=False))["leaderboardRefreshes"] == 0
 
     def test_failed_delete_shows_banner_and_reverts_to_trigger_not_removed(self):
         result = _run(self._harness(fetch_ok=False))

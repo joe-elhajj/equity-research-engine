@@ -161,9 +161,11 @@ def rank(value: float | None, field: str, data: dict | None) -> dict:
 
 def leaderboard(data: dict | None, field: str = "composite", limit: int = 25,
                 *, fields: tuple[str, ...] | None = None, order: str = "desc",
-                all_names: bool = False) -> dict | None:
-    """Screen only validated reference rows; never derive scores or fetch companies.
+                all_names: bool = False, candidate_rows: dict | None = None) -> dict | None:
+    """Order existing scores against validated peers; never derive scores or fetch companies.
 
+    Optional candidate_rows are completed watchlist scores, never replacement
+    peer distributions. Omission preserves the constituent-only response.
     Caller supplies a complete cache validated by load_reference. Multi-field
     ordering uses the equal-weight mean of full-precision per-field midranks,
     never a new percentile against the intersection. Ticker breaks exact ties.
@@ -177,7 +179,8 @@ def leaderboard(data: dict | None, field: str = "composite", limit: int = 25,
     selected = tuple(f for f in FIELDS if f in selected)
     multi = len(selected) > 1
     entries = []
-    for ticker, row in data["rows"].items():
+    candidates = data["rows"] if candidate_rows is None else candidate_rows
+    for ticker, row in candidates.items():
         if not row or not all(_number(row.get(f)) for f in selected):
             continue
         percentiles = {f: _percentile(row[f], f, data) for f in selected}
@@ -186,6 +189,7 @@ def leaderboard(data: dict | None, field: str = "composite", limit: int = 25,
         average = sum(percentiles.values()) / len(selected)
         entries.append((average if multi else row[selected[0]], ticker, {
             "ticker": ticker, "name": row.get("name"),
+            **({"reference_member": ticker in data["rows"]} if candidate_rows is not None else {}),
             "score": None if multi else row[selected[0]],
             "percentile": None if multi else round(percentiles[selected[0]], 1),
             "scores": {f: row[f] for f in selected},
@@ -194,7 +198,7 @@ def leaderboard(data: dict | None, field: str = "composite", limit: int = 25,
         }))
     sign = -1 if order == "desc" else 1
     entries.sort(key=lambda entry: (sign * entry[0], entry[1]))
-    cap = data["total"] if all_names else limit
+    cap = (data["total"] if candidate_rows is None else len(candidates)) if all_names else limit
     return {"field": selected[0] if not multi else None, "fields": list(selected), "order": order,
             "as_of": data["started_at"], "expires_at": data["expires_at"], "version": data["key"]["version"],
             "peers": len(data["scores"][selected[0]]) if not multi else None,

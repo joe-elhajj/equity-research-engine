@@ -1825,3 +1825,11 @@ tbody tr:hover .row-remove{opacity:1}
   #excluded-table th:first-child{width:38%}
   #excluded-table td.tk .tk-name{display:block;margin:4px 0 0;max-width:100%;white-space:normal;overflow-wrap:anywhere}
 }
+
+/* Watchlist screening keeps benchmark provenance distinct from filtered counts. */
+.watchlist-filter{display:flex;align-items:center;gap:8px;min-height:40px;cursor:pointer}
+.watchlist-filter input{width:18px;height:18px;accent-color:#2b659e}
+#leaderboard-watchlist-info p{margin-bottom:8px}
+#leaderboard-watchlist-info a{color:inherit;text-decoration:underline;margin-right:12px}
+#leaderboard-watchlist-info .btn{margin-block:8px}
+.leaderboard-membership{display:block;max-width:280px;white-space:normal;font-size:.8rem;line-height:1.5;color:#284f75;margin-top:5px}

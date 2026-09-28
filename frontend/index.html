@@ -78,7 +78,7 @@
 
   <section id="universe-leaderboard" class="table-section universe-leaderboard hidden" role="tabpanel" aria-labelledby="rankings-tab">
     <div class="sec-head"><div class="sec-lbl">S&amp;P 500 reference rankings</div><span id="universe-leaderboard-stamp" class="sort-caption"></span></div>
-    <p class="leaderboard-note">The dated S&amp;P 500 snapshot is the benchmark for percentiles. Only its constituents appear here. Durability is a weighted 0–100 model score, not a percentile.</p>
+    <p id="leaderboard-benchmark-note" class="leaderboard-note">The dated S&amp;P 500 snapshot is the benchmark for percentiles. Only its constituents appear here. Durability is a weighted 0–100 model score, not a percentile.</p>
     <div class="leaderboard-controls">
       <fieldset id="leaderboard-fields"><legend>Rank by</legend>
         <label><input type="checkbox" value="composite" checked> Total durability</label>
@@ -88,12 +88,18 @@
         <label><input type="checkbox" value="cat_discipline"> Discipline</label>
         <label><input type="checkbox" value="cat_optionality"> Optionality</label>
       </fieldset>
-      <div class="ranking-options"><label for="leaderboard-order">Order</label>
+      <div class="ranking-options"><label class="watchlist-filter"><input type="checkbox" id="leaderboard-watchlist"> My watchlist only</label><label for="leaderboard-order">Order</label>
         <select id="leaderboard-order"><option value="desc">Highest first</option><option value="asc">Lowest first</option></select>
         <button type="button" id="leaderboard-size" class="btn" aria-pressed="false">Show all eligible names</button>
       </div>
     </div>
     <p id="leaderboard-coverage" class="leaderboard-coverage"></p>
+    <div id="leaderboard-watchlist-info" class="leaderboard-note hidden">
+      <p id="leaderboard-watchlist-count"></p>
+      <p id="leaderboard-watchlist-omitted"></p>
+      <a id="leaderboard-watchlist-link" href="#tab=watchlist">View Watchlist scores and filing limits</a>
+      <button type="button" id="leaderboard-refresh" class="btn">Run / refresh watchlist screen</button>
+    </div>
     <p id="leaderboard-statistic" class="leaderboard-note"></p>
     <p id="leaderboard-status" class="leaderboard-note" role="status" aria-live="polite"></p>
     <div id="leaderboard-results" class="surface hidden"><div class="scroll" tabindex="0" aria-label="Reference rankings table"><table class="leaderboard-table">
