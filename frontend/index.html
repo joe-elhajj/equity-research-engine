@@ -81,6 +81,24 @@
     <p>Your watchlist is empty. Search a ticker above to get started.</p>
   </div>
 
+  <section id="universe-leaderboard" class="table-section universe-leaderboard hidden" aria-label="S&amp;P reference leaderboard">
+    <div class="sec-head"><div class="sec-lbl">S&amp;P score leaderboard</div><span id="universe-leaderboard-stamp" class="sort-caption"></span></div>
+    <div class="leaderboard-controls"><label for="leaderboard-field">Rank by</label>
+      <select id="leaderboard-field">
+        <option value="composite">Total durability</option>
+        <option value="cat_reinvestment">Reinvestment</option>
+        <option value="cat_quality">Quality</option>
+        <option value="cat_resilience">Resilience</option>
+        <option value="cat_discipline">Discipline</option>
+        <option value="cat_optionality">Optionality</option>
+      </select><span id="leaderboard-coverage" class="leaderboard-coverage"></span></div>
+    <div class="surface"><div class="scroll"><table class="leaderboard-table">
+      <thead><tr><th class="l">Rank</th><th class="l">Company</th><th>Model score</th><th>S&amp;P percentile</th></tr></thead>
+      <tbody id="leaderboard-body"></tbody>
+    </table></div></div>
+    <p class="leaderboard-note">Select a company to analyze it. Scores and ranks reflect a cached reference build, not live prices.</p>
+  </section>
+
   <section id="equities-section" class="table-section hidden">
     <div class="sec-head"><div class="sec-lbl">Equities</div><div id="equities-sort-caption" class="sort-caption"></div></div>
     <div class="surface"><div class="scroll">

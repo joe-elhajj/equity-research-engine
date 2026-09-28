@@ -1654,6 +1654,39 @@ tbody tr:hover .row-remove{opacity:1}
   #equities-table > tbody > tr > td.score-cell .score-track{background:#a7bed5}
   #equities-table > tbody > tr > td.score-cell .score-fill{background:#286fb5;opacity:1}
   #equities-table > tbody > tr > td.score-composite .score-fill-band-low{background:#9b5b17}
+  #equities-table .universe-rank{display:block;width:max-content;margin:4px 0 0 auto;
+    padding:2px 5px;border-radius:6px;background:#bdd0e4;color:#213f62;
+    border:1px solid #9bb7d2;font:700 .66rem var(--mono);white-space:nowrap}
+  .universe-leaderboard .surface{background:#d9e3ef;border-color:#b9cadc}
+  .leaderboard-controls{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:0 6px 14px;color:#e5efff}
+  .leaderboard-controls label{font-weight:650}
+  .leaderboard-controls select{font:inherit;font-size:.9rem;background:#d9e3ef;color:#20364f;
+    border:1px solid #9cb5cd;border-radius:10px;padding:9px 12px;max-width:100%}
+  .leaderboard-coverage,.leaderboard-note{font-size:.8rem;color:#e0e9f8}
+  .leaderboard-note{margin:12px 6px 0}
+  .leaderboard-table{min-width:540px}
+  .leaderboard-table tbody tr{cursor:pointer}
+  @media(max-width:700px){
+    .universe-leaderboard .sec-head{display:grid;grid-template-columns:1fr auto;gap:8px 12px}
+    .universe-leaderboard .sort-caption{grid-column:1/-1;grid-row:2}
+    .universe-leaderboard .sec-head::after{grid-column:2;grid-row:1}
+  }
+  .leaderboard-table thead th{background:#c8d6e6;color:#233b58;border-bottom-color:#aec1d5}
+  .leaderboard-table tbody td{color:#20364f;border-bottom-color:#b9cadc}
+  .leaderboard-table tbody td:not(.l):not(.na){color:#20364f}
+  .leaderboard-table tbody tr:hover td{background:#cbdcec}
+  .leaderboard-open{font:inherit;font-weight:700;text-align:left;border:0;background:transparent;
+    color:#194c82;cursor:pointer;padding:4px 0}
+  .leaderboard-open:hover{text-decoration:underline}
+  .leaderboard-open:focus-visible{outline:3px solid #316da8;outline-offset:2px;border-radius:3px}
+  #excluded-table tbody tr[role="button"]{cursor:pointer}
+  #excluded-table tbody tr[role="button"]:focus-visible{outline:3px solid #316da8;outline-offset:-3px}
+  #excluded-table .tk-name{color:#52647a}
+  .partial-analysis .partial-notice{margin:0 0 18px;padding:12px 14px;border-radius:11px;
+    background:#d5e3f1;color:#24415d;font-weight:650;line-height:1.45}
+  .company-view-report .partial-analysis .report-section summary{color:#243752}
+  .company-view-report .partial-analysis .report-section .scroll{overflow-x:auto}
+  .company-view-report .partial-analysis .report-section table{min-width:540px}
   /* Gap sign is semantic, not return direction: negative is green,
      positive is red. The preexisting dark-theme pale text was unreadable
      on the new light watchlist surface, so use dark ink and distinct fills. */

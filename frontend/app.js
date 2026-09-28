@@ -818,7 +818,7 @@
     var tiles = companyReport.querySelectorAll(".report-section");
     var fragment = companyReport.querySelector(".report-fragment");
     // Keep valuation discoverable when the server has no usable inputs.
-    if (fragment && !Array.prototype.some.call(tiles, function (tile) {
+    if (fragment && !fragment.classList.contains("partial-analysis") && !Array.prototype.some.call(tiles, function (tile) {
       return tile.querySelector("h3").textContent === "Valuation & sensitivity";
     })) {
       var missingValuation = document.createElement("section");
@@ -1542,8 +1542,23 @@
     tr.appendChild(tickerTd);
     cellsByKey.ticker = tickerTd;
 
+    // Separate benchmark rank, never confused with the 0-100 model score.
+    // Absent/stale/incomplete reference data gets no badge.
+    function addUniverseRank(cell, field) {
+      if (!freshReference(row.universe_rank_as_of, row.universe_rank_expires_at)) return;
+      var r = row.universe_ranks && row.universe_ranks[field];
+      if (!r || r.percentile === null || r.percentile === undefined || !r.peers) return;
+      var badge = document.createElement("span");
+      badge.className = "universe-rank";
+      badge.dataset.expiresAt = row.universe_rank_expires_at;
+      badge.textContent = "S&P P" + Math.round(r.percentile);
+      badge.title = "S&P reference percentile vs " + r.peers + " scored peers. Reference build started " +
+        (row.universe_rank_as_of || "unknown date") + ". Separate from the 0-100 model score.";
+      cell.appendChild(badge);
+    }
     var compositeTd = scoreCell(row.composite, fmtScore(row.composite), { composite: true, animate: animate, stagger: index });
     appendGateIndicator(compositeTd, row.gate_status, row.gate_tooltip);
+    addUniverseRank(compositeTd, "composite");
     tr.appendChild(compositeTd);
     cellsByKey.composite = compositeTd;
 
@@ -1556,6 +1571,7 @@
     ].forEach(function (pair) {
       var key = pair[0], value = pair[1];
       var cell = scoreCell(value, fmtScore(value), { animate: animate, stagger: index });
+      addUniverseRank(cell, key);
       tr.appendChild(cell);
       cellsByKey[key] = cell;
     });
@@ -1650,8 +1666,8 @@
   }
 
   function renderExcludedRow(row) {
-    // No accordion here — durability scoring didn't run for excluded
-    // tickers, so there's no analysis to expand.
+    // Excluded tickers stay unscored; supported filing-only names may
+    // open a clearly limited view without joining the scored equity table.
     var tr = document.createElement("tr");
     tr.appendChild(tickerCell(row.ticker, false, row.name));
     var reasonCell = td(humanizeReason(row.flag), { cls: "l" });
@@ -1659,6 +1675,19 @@
     // never auto-hides on empty, only its inner content swaps to the
     // empty-state message via the onRemoved callback.
     tr.appendChild(appendRemoveControl(reasonCell, row.ticker, tr, null, null, els.excludedBody, updateExcludedEmptyState));
+    if (row.limited_analysis) {
+      tr.tabIndex = 0;
+      tr.setAttribute("role", "button");
+      tr.setAttribute("aria-label", "Open limited filing view for " + row.ticker);
+      tr.addEventListener("click", function (ev) {
+        if (ev.target.closest(".row-remove-wrap")) return;
+        openCompanyView(row.ticker, tr);
+      });
+      tr.addEventListener("keydown", function (ev) {
+        if (ev.target !== tr) return;
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openCompanyView(row.ticker, tr); }
+      });
+    }
     return tr;
   }
 
@@ -2187,7 +2216,71 @@
     if (ev.key === "Escape" && !els.legendModalOverlay.classList.contains("hidden")) closeLegendModal();
   });
 
+  // The leaderboard reads a completed reference cache only. The API never
+  // starts a reference build, and no list is shown on a cache miss/error.
+  var leaderSection = document.getElementById("universe-leaderboard");
+  var leaderField = document.getElementById("leaderboard-field");
+  var leaderBody = document.getElementById("leaderboard-body");
+  var leaderStamp = document.getElementById("universe-leaderboard-stamp");
+  var leaderCoverage = document.getElementById("leaderboard-coverage");
+  var leaderboardRequest = 0;
+  function freshReference(asOf, expiresAt) {
+    var start = Date.parse(asOf), end = Date.parse(expiresAt), now = Date.now();
+    return Number.isFinite(start) && Number.isFinite(end) && start <= now && now < end &&
+      end - start <= 90 * 86400000;
+  }
+  function expireRanks() {
+    if (!freshReference(leaderSection.dataset.asOf, leaderSection.dataset.expiresAt)) {
+      leaderSection.classList.add("hidden");
+      leaderBody.innerHTML = "";
+    }
+    document.querySelectorAll(".universe-rank").forEach(function (badge) {
+      if (!(Date.now() < Date.parse(badge.dataset.expiresAt))) badge.remove();
+    });
+  }
+  setInterval(expireRanks, 1000);
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) { expireRanks(); loadLeaderboard(); } });
+  function loadLeaderboard() {
+    var selected = leaderField.value;
+    var request = ++leaderboardRequest;
+    leaderSection.classList.add("hidden");
+    apiGet("/api/universe/leaderboard?field=" + encodeURIComponent(selected) + "&limit=25")
+      .then(function (data) {
+        if (request !== leaderboardRequest || selected !== leaderField.value) return;
+        if (!data || data.available === false || !data.rows || !data.rows.length ||
+            !freshReference(data.as_of, data.expires_at)) return;
+        leaderSection.dataset.asOf = data.as_of;
+        leaderSection.dataset.expiresAt = data.expires_at;
+        leaderBody.innerHTML = "";
+        data.rows.forEach(function (item, index) {
+          var tr = document.createElement("tr");
+          var rankCell = td(String(index + 1), {cls:"l"});
+          tr.appendChild(rankCell);
+          var company = document.createElement("td");
+          company.className = "l";
+          var button = document.createElement("button");
+          button.type = "button";
+          button.className = "leaderboard-open";
+          button.textContent = item.ticker + (item.name ? "  " + item.name : "");
+          button.setAttribute("aria-label", "Analyze " + item.ticker + (item.name ? ", " + item.name : ""));
+          tr.addEventListener("click", function () { openCompanyView(item.ticker, button); });
+          company.appendChild(button);
+          tr.appendChild(company);
+          tr.appendChild(td(typeof item.score === "number" ? item.score.toFixed(1) : null));
+          tr.appendChild(td(typeof item.percentile === "number" ? "P" + item.percentile.toFixed(1) : null));
+          leaderBody.appendChild(tr);
+        });
+        leaderStamp.textContent = "Reference " + (data.version || "") + " · Build started " +
+          new Date(data.as_of).toLocaleDateString();
+        leaderCoverage.textContent = data.peers + " scored peers for this feature; " +
+          data.scored + "/" + data.total + " companies scored overall";
+        leaderSection.classList.remove("hidden");
+      }).catch(function () { if (request === leaderboardRequest) leaderSection.classList.add("hidden"); });
+  }
+  leaderField.addEventListener("change", loadLeaderboard);
+
   // ---- boot ----
 
   runScreen();
+  loadLeaderboard();
 })();

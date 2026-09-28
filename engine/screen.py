@@ -341,6 +341,12 @@ class ScreenRow:
     gate_status: Optional[str] = None            # "GATED" | "UNTESTABLE" | None
     gate_tooltip: str = ""
     composite_ungated: Optional[float] = None
+    # Distinct from the weighted model scores above. Null until a complete,
+    # current, matching S&P reference build exists; never infer a rank.
+    universe_ranks: dict = field(default_factory=dict)
+    universe_rank_as_of: Optional[str] = None
+    universe_rank_expires_at: Optional[str] = None
+    limited_analysis: bool = False  # filing-only view; never a scored equity
     # Company name (feature/search-by-name): threaded from CompanyData.name
     # (EDGAR) -- already fetched for every row that got as far as an EDGAR
     # lookup succeeding (see _process_one), so this costs zero new network
@@ -580,10 +586,20 @@ def _process_one(
         return _empty_row(ticker, f"skipped: {evidence}",
                           universe_version=universe_version, name=cd.name), None
 
-    # For "unclassified" — include in operating rows with flag, don't try to score
-    if classification == "unclassified":
-        return _empty_row(ticker, evidence,
-                          universe_version=universe_version, name=cd.name), None
+    # Annual-less issuers stay excluded from scores but can open a filing view.
+    if classification in ("unclassified", "financial"):
+        # Retain the ETF vendor probe for financial registrations; a trust
+        # must not turn into a limited equity merely because it lacks a 10-K.
+        if classification == "financial":
+            etf_row = _try_fund_via_yfinance(ticker, evidence_suffix=evidence)
+            if etf_row is not None:
+                return None, etf_row
+        from engine.partial_analysis import reason as partial_reason
+        note = partial_reason(cd) or evidence
+        row = _empty_row(ticker, note, excluded=True,
+                         universe_version=universe_version, name=cd.name)
+        row.limited_analysis = True
+        return row, None
 
     # "operating_domestic", "operating_fpi", or override → attempt scoring
     # Pass the override flag so durability.score() can bypass financial-SIC exclusion
@@ -605,11 +621,13 @@ def _process_one(
         )
         if etf_row is not None:
             return None, etf_row
-        return _empty_row(
+        limited = _empty_row(
             ticker, ds.exclusion_reason, excluded=True,
             completeness=ds.data_completeness, config_hash=ds.config_hash,
             universe_version=universe_version, name=cd.name,
-        ), None
+        )
+        limited.limited_analysis = True
+        return limited, None
 
     def _cat(name: str) -> Optional[float]:
         c = ds.categories.get(name)
@@ -1208,6 +1226,20 @@ def run_screen(
             matched = [(tk, w) for tk, w in er.top_holdings if tk.upper() in operating_tickers]
             er.overlap_with_screen = sum(w for _, w in matched) if matched else None
             er.overlap_count = len(matched) if matched else None
+
+    # Read-only: never start the hundreds-of-tickers reference build on a
+    # normal screen run. The explicit builder uses _process_one itself, so
+    # both cohorts use the same scoring route, including absent peer inputs.
+    from engine import universe_ranks as UR
+    from engine.universe_rank_release import load_reference
+    reference_scores = load_reference(cfg)
+    for row in rows:
+        if not UR.eligible(row) or not reference_scores:
+            continue
+        row.universe_ranks = {field: UR.rank(getattr(row, field), field, reference_scores)
+                              for field in UR.FIELDS}
+        row.universe_rank_as_of = reference_scores["started_at"]
+        row.universe_rank_expires_at = reference_scores["expires_at"]
 
     # Compute batch-level quality-value scores before sorting
     _assign_quality_value_scores(rows)
