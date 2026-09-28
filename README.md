@@ -282,6 +282,13 @@ filters across refresh and analysis/back navigation. Rankings start with Total
 durability, Top 25 and Highest first; select multiple fields, show all eligible
 constituents or switch to Lowest first to screen the benchmark's other end.
 
+**My watchlist only** is off by default. Turn it on to screen the latest completed
+watchlist scores, including eligible outside-index equities such as NVO/ASML,
+against the same S&P reference. The filter never starts a screen or builds a
+reference. With no completed screen, use **Run / refresh watchlist screen**;
+missing scores and filing/classification limits are counted with a Watchlist link.
+Funds remain in their own section. Filter selection persists in the URL.
+
 Percentile badges keep one decimal and compare against the dated S&P 500
 snapshot, while durability remains a weighted 0–100 model score. Outside-index
 watchlist names are explicitly labeled. Multi-field mode requires every

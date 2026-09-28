@@ -1463,6 +1463,7 @@
           // updateExcludedEmptyState()) — optional, most callers pass none.
           if (onRemoved) onRemoved();
           checkEmptyWatchlist();
+          if (leaderWatchlist.checked) loadLeaderboard();
         })
         .catch(function (e) {
           showBanner("Failed to remove " + ticker + ": " + e.message, true);
@@ -1803,6 +1804,7 @@
     updateExcludedEmptyState();
 
     buildMetaLine(data);
+    if (leaderWatchlist.checked) loadLeaderboard();
   }
 
   // Provenance footer: mono, small, muted-but-legible, with the config
@@ -1865,6 +1867,7 @@
             renderScreen(job.result);
           } else {
             showBanner("Screen run failed: " + (job.error || "unknown error"), true);
+            if (leaderWatchlist.checked) loadLeaderboard();
           }
         })
         .catch(function (e) {
@@ -1890,7 +1893,7 @@
       showBanner("Running screen… this takes about 60 seconds for a full watchlist.");
       fetch("/api/screen")
         .then(function (r) { return r.json(); })
-        .then(function (payload) { pollScreenStatus(payload.job_id); })
+        .then(function (payload) { pollScreenStatus(payload.job_id); if (leaderWatchlist.checked) loadLeaderboard(); })
         .catch(function (e) { showBanner("Failed to start screen run: " + e.message, true); });
     });
   }
@@ -2250,6 +2253,9 @@
   var leaderResults = document.getElementById("leaderboard-results");
   var leaderOrder = document.getElementById("leaderboard-order");
   var leaderSize = document.getElementById("leaderboard-size");
+  var leaderWatchlist = document.getElementById("leaderboard-watchlist");
+  var leaderWatchlistInfo = document.getElementById("leaderboard-watchlist-info");
+  var leaderRefresh = document.getElementById("leaderboard-refresh");
   var fieldLabels = {composite:"Total durability", cat_reinvestment:"Reinvestment", cat_quality:"Quality",
     cat_resilience:"Resilience", cat_discipline:"Discipline", cat_optionality:"Optionality"};
   var leaderboardRequest = 0, leaderSignature = null, activeTab = "watchlist", showAllNames = false;
@@ -2267,6 +2273,7 @@
     leaderCoverage.textContent = "";
     leaderStamp.textContent = "";
     leaderStatus.textContent = message;
+    leaderWatchlistInfo.classList.add("hidden");
   }
   function expireRanks() {
     if (leaderBody.children.length && !freshReference(leaderSection.dataset.asOf, leaderSection.dataset.expiresAt)) {
@@ -2285,13 +2292,14 @@
   function loadLeaderboard() {
     if (activeTab !== "rankings") return;
     var fields = selectedFields(), request = ++leaderboardRequest;
-    var signature = fields.join(",") + ":" + leaderOrder.value + ":" + showAllNames;
+    var signature = fields.join(",") + ":" + leaderOrder.value + ":" + showAllNames + ":" + leaderWatchlist.checked;
     leaderSignature = signature;
     document.getElementById("leaderboard-statistic").textContent = fields.length > 1 ?
       "Average selected percentiles: equal-weight screening statistic, NOT a fresh S&P percentile. Only names with numeric scores for every selected field are included." : "";
     clearLeaderboard(fields.length ? "Loading validated reference…" : "Select at least one field to rank by.");
     if (!fields.length) return;
     var query = new URLSearchParams({fields:fields.join(","), order:leaderOrder.value, limit:"25", all_names:String(showAllNames)});
+    if (leaderWatchlist.checked) query.set("watchlist_only", "true");
     apiGet("/api/universe/leaderboard?" + query.toString()).then(function (data) {
       if (request !== leaderboardRequest || activeTab !== "rankings") return;
       if (!data || data.available === false || !Array.isArray(data.rows) || !freshReference(data.as_of, data.expires_at)) {
@@ -2301,10 +2309,23 @@
       leaderSection.dataset.asOf = data.as_of;
       leaderSection.dataset.expiresAt = data.expires_at;
       leaderStamp.textContent = "S&P 500 snapshot " + (data.snapshot_date || "date not stated") + " · " + (data.version || "") + " · Build " + data.as_of.slice(0, 10);
-      leaderCoverage.textContent = "Coverage " + data.scored + "/" + data.total + " · Eligible intersection " + data.intersection_count +
+      leaderCoverage.textContent = (data.watchlist_only ? "Overall reference coverage " : "Coverage ") + data.scored + "/" + data.total +
+        (data.watchlist_only ? "" : " · Eligible intersection " + data.intersection_count) +
         " · Peers: " + fields.map(function (f) { return fieldLabels[f] + " " + data.peer_counts[f]; }).join("; ");
       leaderStatus.textContent = data.rows.length ? "Showing " + data.rows.length + " of " + data.intersection_count + " eligible names" :
         "No constituents have numeric scores for all selected fields.";
+      if (data.watchlist_only) {
+        leaderWatchlistInfo.classList.remove("hidden");
+        document.getElementById("leaderboard-watchlist-count").textContent = "Filtered to my watchlist · Eligible " + data.intersection_count + "/" + data.watchlist_equity_count + " equity names" +
+          (data.screen_generated_at ? " · Screen " + data.screen_generated_at.replace("T", " ").slice(0, 19) + " UTC" : "");
+        var omitted = data.omitted;
+        document.getElementById("leaderboard-watchlist-omitted").textContent = "Not ranked: " + omitted.no_current_score + " without a current screen row; " +
+          omitted.not_scored + " not scored (classification or filing limits); " + omitted.incomplete_scores + " below 80% completeness or missing a selected score. " + data.fund_count + " funds remain in Watchlist.";
+        leaderRefresh.disabled = data.screen_state === "running";
+        if (data.screen_state !== "done") leaderStatus.textContent = data.screen_state === "running" ?
+          "Watchlist screen is running. No filtered ranking until it completes." : "No completed current watchlist screen. Run / refresh the existing screen to rank your names.";
+        else if (!data.rows.length) leaderStatus.textContent = "No eligible watchlist equities for the selected fields. Review the counts and Watchlist below.";
+      }
       var header = document.createElement("tr");
       var labels = ["Order", "Company"];
       if (fields.length === 1) labels.push("Model score", "S&P percentile");
@@ -2326,7 +2347,13 @@
         button.textContent = item.ticker + (item.name ? "  " + item.name : "");
         button.setAttribute("aria-label", "Analyze " + item.ticker + (item.name ? ", " + item.name : ""));
         tr.addEventListener("click", function () { openCompanyView(item.ticker, button); });
-        company.appendChild(button); tr.appendChild(company);
+        company.appendChild(button);
+        if (data.watchlist_only) {
+          var membership = document.createElement("span"); membership.className = "leaderboard-membership";
+          membership.textContent = item.reference_member ? "In this reference index" : "vs S&P 500 peers · not in this reference index";
+          company.appendChild(membership);
+        }
+        tr.appendChild(company);
         if (fields.length === 1) {
           tr.appendChild(td(Number.isFinite(item.score) ? item.score.toFixed(1) : null));
           tr.appendChild(td(Number.isFinite(item.percentile) ? "P" + item.percentile.toFixed(1) : null));
@@ -2359,6 +2386,10 @@
     leaderFields.querySelectorAll("input").forEach(function (input) { input.checked = fields.includes(input.value); });
     leaderOrder.value = params.get("order") === "asc" ? "asc" : "desc";
     showAllNames = params.get("all") === "true";
+    leaderWatchlist.checked = params.get("watchlist_only") === "true";
+    document.getElementById("leaderboard-benchmark-note").textContent = "The dated S&P 500 snapshot is the benchmark for percentiles. " +
+      (leaderWatchlist.checked ? "Watchlist comparisons include eligible outside-index equities; P values are never within-watchlist ranks. " : "Only its constituents appear here. ") +
+      "Durability is a weighted 0–100 model score, not a percentile.";
     leaderSize.textContent = showAllNames ? "Show top 25" : "Show all eligible names";
     leaderSize.setAttribute("aria-pressed", String(showAllNames));
     document.getElementById("watchlist-panel").classList.toggle("hidden", activeTab !== "watchlist");
@@ -2368,7 +2399,7 @@
       var button = document.getElementById(tab + "-tab");
       button.setAttribute("aria-selected", String(activeTab === tab)); button.tabIndex = activeTab === tab ? 0 : -1;
     });
-    var signature = selectedFields().join(",") + ":" + leaderOrder.value + ":" + showAllNames;
+    var signature = selectedFields().join(",") + ":" + leaderOrder.value + ":" + showAllNames + ":" + leaderWatchlist.checked;
     if (activeTab === "rankings" && (oldTab !== activeTab || signature !== leaderSignature)) loadLeaderboard();
     if (activeTab !== "rankings") { leaderboardRequest++; leaderSignature = null; }
     var ticker = params.get("company");
@@ -2390,8 +2421,21 @@
   leaderFields.addEventListener("change", function () { updateRoute({fields:selectedFields().join(","), company:null}); });
   leaderOrder.addEventListener("change", function () { updateRoute({order:leaderOrder.value, company:null}); });
   leaderSize.addEventListener("click", function () { updateRoute({all:String(!showAllNames), company:null}); });
+  leaderWatchlist.addEventListener("change", function () { updateRoute({watchlist_only:leaderWatchlist.checked ? "true" : null, company:null}); });
+  leaderRefresh.addEventListener("click", runScreen);
+  document.getElementById("leaderboard-watchlist-link").addEventListener("click", function (event) { event.preventDefault(); updateRoute({tab:"watchlist", company:null}); });
   window.addEventListener("popstate", applyRoute);
   window.addEventListener("hashchange", applyRoute);
-  runScreen();
+  // Restoring a filtered rankings URL is a read, not permission to score.
+  var initialRoute = new URLSearchParams(location.hash.slice(1));
+  if (initialRoute.get("watchlist_only") === "true") {
+    apiGet("/api/screen/latest").then(function (job) {
+      if (job.status === "done" && job.result) renderScreen(job.result);
+      else if (job.status === "running" && job.job_id) {
+        showBanner("Watchlist screen is already running…");
+        pollScreenStatus(job.job_id);
+      } else showBanner("No completed current screen. Use Refresh Watchlist to run the existing screen.");
+    }).catch(function () { showBanner("Completed screen unavailable. Use Refresh Watchlist to try again.", true); });
+  } else runScreen();
   applyRoute();
 })();

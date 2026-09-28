@@ -1165,7 +1165,8 @@ def _run_screen_job(job_id: str, tickers: list[str]) -> None:
 
 @app.get("/api/universe/leaderboard")
 def universe_leaderboard(field: str = "composite", limit: int = 25,
-                         fields: str | None = None, order: str = "desc", all_names: bool = False):
+                         fields: str | None = None, order: str = "desc", all_names: bool = False,
+                         watchlist_only: bool = False):
     """Read a completed reference build only. Never launch a scoring job."""
     from engine import universe_ranks as UR
     selected = tuple(fields.split(",")) if fields is not None else (field,)
@@ -1181,8 +1182,43 @@ def universe_leaderboard(field: str = "composite", limit: int = 25,
         raise HTTPException(status_code=400, detail="Limit exceeds the reference snapshot ticker count.")
     from engine.universe_rank_release import load_reference
     data = load_reference(app.state.cfg)
-    result = UR.leaderboard(data, field, limit, fields=selected, order=order, all_names=all_names)
+    candidates = None
+    details = {}
+    if watchlist_only and data is not None:
+        # Read live membership every time, and only the latest requested screen.
+        # A newer running/failed job must not silently fall back to older scores.
+        wl = watchlist.load()
+        job = next(reversed(app.state.screen_jobs.values()), None)
+        state = job.get("status") if job else "not_run"
+        screen = job.get("result") if state == "done" else None
+        current = set(wl["tickers"])
+        funds = set(wl["etfs"])
+        if screen:
+            funds |= {r["ticker"] for r in screen["etfs"]} & current
+        current -= funds
+        candidates = {}
+        omitted = {"no_current_score": 0, "not_scored": 0, "incomplete_scores": 0}
+        rows = {r["ticker"]: r for r in screen["equities"]} if screen else {}
+        excluded = {r["ticker"] for r in screen["excluded"]} if screen else set()
+        for ticker in sorted(current):
+            row = rows.get(ticker)
+            if ticker in excluded:
+                omitted["not_scored"] += 1
+            elif row is None:
+                omitted["no_current_score"] += 1
+            elif (not UR._number(row.get("composite"))
+                  or not UR._number(row.get("completeness"), .8, 1)
+                  or not all(UR._number(row.get(f)) for f in selected)):
+                omitted["incomplete_scores"] += 1
+            else:
+                candidates[ticker] = row
+        details = {"watchlist_only": True, "screen_state": state if screen or state != "done" else "not_run",
+                   "screen_generated_at": screen.get("generated_at") if screen else None,
+                   "watchlist_equity_count": len(current), "fund_count": len(funds), "omitted": omitted}
+    result = UR.leaderboard(data, field, limit, fields=selected, order=order,
+                            all_names=all_names, candidate_rows=candidates)
     if result is not None:
+        result.update(details)
         result["snapshot_date"] = UR.snapshot_date(app.state.cfg)
     return result if result is not None else {"available": False}
 
@@ -1195,6 +1231,21 @@ def start_screen(background_tasks: BackgroundTasks):
     app.state.screen_jobs[job_id] = {"status": "running", "result": None}
     background_tasks.add_task(_run_screen_job, job_id, tickers)
     return JSONResponse(status_code=202, content={"job_id": job_id, "status": "running"})
+
+
+@app.get("/api/screen/latest")
+def latest_screen():
+    """Read-only startup for watchlist-filter URLs; never starts a screen."""
+    job_id = next(reversed(app.state.screen_jobs), None)
+    job = {**screen_status(job_id), "job_id": job_id} if job_id else {"status": "not_run", "result": None}
+    if job.get("status") == "done" and job.get("result"):
+        wl = watchlist.load()
+        live = set(wl["tickers"] + wl["etfs"])
+        result = dict(job["result"])
+        for bucket in ("equities", "etfs", "excluded"):
+            result[bucket] = [r for r in result[bucket] if r["ticker"] in live]
+        return {**job, "result": result}
+    return job
 
 
 @app.get("/api/screen/status/{job_id}")

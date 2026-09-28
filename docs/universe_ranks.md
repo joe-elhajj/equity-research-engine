@@ -49,10 +49,11 @@ date; a fresh build does not imply current index membership.
 Watchlist is the default tab and keeps Equities, ETFs/Funds and “Not scored -
 classification or filing limits” together. The S&P rankings tab requests its
 list only when opened. The URL hash records the tab, selected fields, order,
-Top 25/all choice and open company; refresh and browser back/forward restore
+Top 25/all choice, My watchlist only and open company; refresh and browser back/forward restore
 that state. Analysis never adds a constituent to the watchlist.
 
-Top 25 and Highest first are defaults. Show all eligible names is bounded by
+Top 25 and Highest first are defaults. With My watchlist only off (the default),
+Show all eligible names is bounded by
 the configured snapshot's ticker count (503 currently), not a request to score
 or fetch companies. Lowest first lets reviewers inspect the bottom; the first
 column is labeled Order in both directions. Ticker ascending breaks exact
@@ -69,6 +70,34 @@ percentile**. The table shows each selected score/percentile, the intersection
 count, each field's peer count and overall coverage. Zero selection makes no
 ranking request. Missing/expired references show an explicit unavailable state
 and no ranks, without starting a build.
+
+### My watchlist only
+
+`watchlist_only=true` reads live watchlist membership and the latest requested
+server screen, reusing the same ranking function and validated S&P distributions.
+It does not intersect with constituent keys: outside-index equities are eligible
+when their actual completed screen row has a numeric composite, at least 80%
+completeness (the existing badge gate), and numeric scores for every selected
+field. Missing selected fields never become zero. A constituent also uses its
+screen row, never a substitute reference score. Membership labels come only from
+validated reference row keys. Single-field ordering uses the unrounded screen
+score; multi-field ordering uses the existing full-precision percentile average.
+There is no within-watchlist percentile calculation.
+
+Filtered eligible counts are separate from overall reference coverage and peer
+counts. Missing screen rows, unscored names and incomplete rows are counted with
+a Watchlist link; funds are excluded. Show all is bounded by the live watchlist,
+not a new scoring population. Snapshot/build dates and the screen timestamp are
+shown. A newer running or failed screen suppresses older results. Completed jobs
+are process-local; a server restart requires an explicit screen refresh for this
+mode. `/api/screen/latest` reads existing state only, pruning removed names.
+Restoring a filter URL does not start scoring; the explicit refresh control runs
+the existing screen. Toggling, changing fields/order/size, or returning from
+analysis only reads data. Membership is reread on each ranking request; screen
+completion and local removals refresh an active filter, while tab return and
+visibility changes reread current state. Missing/expired references always fail
+closed. With the option off, the existing constituent-only API response and
+selection semantics are unchanged.
 
 The read-only endpoint retains `field` compatibility and accepts `fields` as a
 comma-separated unique subset, `order=asc|desc`, `limit` from 1 through snapshot
