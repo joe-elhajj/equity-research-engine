@@ -16,6 +16,30 @@ Markdown/HTML report, and a local FastAPI web app + dashboard
 (`app/`, `frontend/`) for an ongoing watchlist — batch durability
 screening, the expectations-gap band, per-ticker Tier 2/3 drill-down.
 
+## Quick Start
+
+Local use on macOS or Linux. Install **CPython 3.12.2** first (the tested version); Windows has not been validated.
+
+```bash
+git clone https://github.com/joe-elhajj/equity-research-engine.git
+cd equity-research-engine
+python3.12 --version  # should report 3.12.2
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install pip==24.2
+python -m pip install -r requirements.txt
+python -m pip check
+```
+
+Edit `config.yaml` and replace the `sec.user_agent` placeholder with **your own name and email**. SEC EDGAR requires a real contact; requests may return 403 without one. Then run a report and start the local dashboard:
+
+```bash
+python analyze.py AAPL
+uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+The report is saved in `reports/`; open `http://localhost:8000` for the dashboard. The CLI and core (Tier 1) dashboard do **not** require an API key. For optional Tier 2 flags and Tier 3 council, set **your own** `ANTHROPIC_API_KEY` in your shell environment before starting the app; never commit or share it. For tests (`python -m pytest`), install Node.js 20 as well. See the full Setup and Run sections below; `app/INSTALL.md` is only for optional macOS auto-start.
+
 ## Setup
 
 Use **CPython 3.12.2** (the tested interpreter) in a fresh virtual environment.
