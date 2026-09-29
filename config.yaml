@@ -1,12 +1,12 @@
 # =====================================================================
-# Investment Engine — configuration
+# Equity Research Engine — configuration
 # Everything that is an ASSUMPTION or a JUDGMENT lives here, in version
 # control, owned by you. The code never invents these at runtime.
 # =====================================================================
 
 sec:
   # REQUIRED by the SEC. Use your real name + email or you will get 403s.
-  user_agent: "YOUR NAME - Investment Engine - your.email@example.com"
+  user_agent: "YOUR NAME - Equity Research Engine - your.email@example.com"
   request_delay_seconds: 0.2          # ~5 req/s, well under SEC's limit
 
 report:
