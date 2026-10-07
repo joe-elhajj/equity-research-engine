@@ -1,20 +1,10 @@
 # Equity Research Engine
 
-A three-tier investment research system. **Tier 1** is a fully
-deterministic fundamental-analysis pipeline — SEC EDGAR filings are the
-authoritative data source, every number is derived arithmetically with no
-model involvement, and all assumptions live in version-controlled config.
-**Tier 2** adds LLM-driven qualitative extraction layered on top of the
-deterministic output (verbatim red/green flag extraction from 10-K text).
-**Tier 3** is an LLM council that synthesizes Tier 1 signals and Tier 2
-annotations into a final research memo. Tiers 2 and 3 consume Tier 1
-output; they never alter it, and no model call anywhere in the codebase
-ever derives, adjusts, or overrides a numeric result.
+I built this engine to research stocks through factor investing: comparing companies systematically using measurable business characteristics rather than looking at each company in isolation. It starts with SEC filings and focuses on business quality, reinvestment and financial strength, with a separate check on what today's price assumes about future growth.
 
-Two ways to use it: a one-shot CLI (`analyze.py`) for a single ticker's
-Markdown/HTML report, and a local FastAPI web app + dashboard
-(`app/`, `frontend/`) for an ongoing watchlist — batch durability
-screening, the expectations-gap band, per-ticker Tier 2/3 drill-down.
+The durability score combines five measures: reinvestment, quality, resilience, discipline and optionality. I use them to compare returns on capital, consistency of margins, balance sheet strength, dilution and investment in the business. The dashboard lets me screen a watchlist or compare eligible companies against a dated S&P 500 reference, then open the filing analysis behind each score.
+
+I designed it for investment research over months to years, not for timing trades over days or weeks. That is the intended horizon, not a holding period established by return testing. All financial calculations are deterministic. Optional LLM research adds qualitative context and a memo without changing the numbers. It runs locally as a dashboard or a single company report.
 
 ## Quick Start
 
@@ -276,8 +266,7 @@ ignored by Git; publication is an explicit reviewed release operation.
 
 ### Watchlist and S&P rankings
 
-The header separates your Watchlist (the default) from **S&P rankings**, which
-loads a completed reference only when opened. The URL preserves the tab and
+The dashboard separates your Watchlist from S&P rankings so you can use the same factor investing research framework on your own companies or the eligible benchmark universe. S&P rankings loads a completed reference only when opened. The URL preserves the tab and
 filters across refresh and analysis/back navigation. Rankings start with Total
 durability, Top 25 and Highest first; select multiple fields, show all eligible
 constituents or switch to Lowest first to screen the benchmark's other end.
